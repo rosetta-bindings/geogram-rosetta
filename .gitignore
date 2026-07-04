@@ -1,0 +1,12 @@
+# Prerequisites
+build/
+extern/
+gen/
+bindings/
+
+.vscode
+.DS_Store
+lnkd.*
+
+generator
+out_*

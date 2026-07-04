@@ -1,0 +1,104 @@
+{
+    "//": "Rosetta binding manifest for the Geogram library.",
+    "//paths": "All relative paths resolve from THIS file's directory (the project root).",
+    "//design": "GEO::Mesh is NOT bound directly: its data API lives in public member objects (mesh.vertices, mesh.facets, ...) that hold a Mesh& back-reference (non copy-assignable, so the generated def_readwrite would not compile) and expose raw pointers / GEO::vector containers no backend can marshal. Instead src/Mesh.{h,cpp} wraps GEO::Mesh behind a pImpl with flat std::vector accessors, and src/algorithms.{h,cpp} exposes the requested geogram algorithms (reconstruction, remeshing, parameterization/texturing, booleans, CSG) as one-line delegating free functions.",
+    "//sources": "The geogram sources are compiled straight into every binding target (no prebuilt libgeogram: the wasm target needs the sources anyway, and a native lib built by another toolchain would risk ABI mismatch). Globs are non-recursive, one per source dir. Optional parts guarded by GEOGRAM_WITH_TETGEN / _TRIANGLE / _LUA / _PDEL compile away. The vendored zlib/rply/libMeshb/OpenNL are C sources (the generated projects enable_language(C)).",
+    "//defines": "GEOGRAM_USE_BUILTIN_DEPS: mesh_io/geofile include the vendored libMeshb/rply/zlib instead of system libs. GEOGRAM_WITH_HLBFGS: compiles the HLBFGS optimizer in (required by the Newton iterations of CVT remeshing).",
+
+    "compile_definitions": [
+        "GEOGRAM_USE_BUILTIN_DEPS",
+        "GEOGRAM_WITH_HLBFGS"
+    ],
+    "//version-h": "src/geogram/version.h stands in for the header geogram's own CMake would generate; src/ is listed before extern/geogram/src/lib so it wins the include lookup.",
+
+    "cpp26_root": "$ENV{HOME}/devs/c++/clang-p2996/build",
+    "cpp26_cxx": "$ENV{HOME}/devs/c++/clang-p2996/build/bin/clang++",
+    "cpp26_cc": "$ENV{HOME}/devs/c++/clang-p2996/build/bin/clang",
+    "cpp26_lib": "$ENV{HOME}/devs/c++/clang-p2996/build/lib",
+
+    "user_include": [
+        "./src",
+        "./extern/geogram/src/lib",
+        "./extern/geogram/src/lib/geogram/third_party",
+        "./extern/geogram/src/lib/geogram/third_party/libMeshb/sources"
+    ],
+    "rosetta_include": "../rosetta/include",
+    "generator_name": "geogram",
+    "module_name": "geogram",
+
+    "//link-options": "Under Node, geogram's GEO::initialize() mounts the host filesystem with NODEFS (EM_ASM in basic/common.cpp), so the wasm link needs emscripten's nodefs.js library — exactly what geogram's own cmake/platforms/Emscripten-clang.cmake adds.",
+    "targets": [
+        {"lang": "python-expanded", "name": "geogram"},
+        {"lang": "node-expanded",   "name": "geogram"},
+        {"lang": "wasm-expanded",   "name": "geogram", "link_options": ["-lnodefs.js"]},
+        {"lang": "typescript",      "name": "geogram"}
+    ],
+
+    "user_sources": [
+        "./src/*.cpp",
+        "./extern/geogram/src/lib/geogram/basic/*.cpp",
+        "./extern/geogram/src/lib/geogram/numerics/*.cpp",
+        "./extern/geogram/src/lib/geogram/delaunay/*.cpp",
+        "./extern/geogram/src/lib/geogram/voronoi/*.cpp",
+        "./extern/geogram/src/lib/geogram/points/*.cpp",
+        "./extern/geogram/src/lib/geogram/mesh/*.cpp",
+        "./extern/geogram/src/lib/geogram/parameterization/*.cpp",
+        "./extern/geogram/src/lib/geogram/image/*.cpp",
+        "./extern/geogram/src/lib/geogram/bibliography/*.cpp",
+        "./extern/geogram/src/lib/geogram/third_party/OpenNL/*.c",
+        "./extern/geogram/src/lib/geogram/third_party/rply/*.c",
+        "./extern/geogram/src/lib/geogram/third_party/zlib/*.c",
+        "./extern/geogram/src/lib/geogram/third_party/libMeshb/sources/libmeshb7.c",
+        "./extern/geogram/src/lib/geogram/third_party/xatlas/*.cpp",
+        "./extern/geogram/src/lib/geogram/third_party/HLBFGS/*.cpp"
+    ],
+
+    "classes": [
+        {
+            "name": "georo::Mesh",
+            "header": "Mesh.h",
+            "doc": "Triangulated surface mesh / point cloud (wraps GEO::Mesh). Geometry goes in and out as flat arrays: vertices [x0,y0,z0,...], triangles [v0,v1,v2,...]. load()/save() understand .obj, .off, .ply, .stl, .mesh/.meshb and .geogram."
+        }
+    ],
+
+    "functions": [
+        {"header": "algorithms.h", "name": "georo::initialize",
+         "doc": "Initialize geogram (done lazily by every function; call with verbose=true to enable geogram's logger)."},
+
+        {"header": "algorithms.h", "name": "georo::co3ne_smooth",
+         "doc": "Smooth a point cloud by projection on the best approximating plane of the k nearest neighbors (Co3Ne)."},
+        {"header": "algorithms.h", "name": "georo::co3ne_smooth_and_reconstruct",
+         "doc": "Smooth a point cloud and reconstruct a triangulated surface (Co3Ne). radius is the maximum distance used to connect neighbors with triangles."},
+
+        {"header": "algorithms.h", "name": "georo::remesh_smooth",
+         "doc": "Isotropic remeshing by Centroidal Voronoi Tesselation (nb_points samples, Lloyd + Newton optimization)."},
+
+        {"header": "algorithms.h", "name": "georo::mesh_repair",
+         "doc": "Glue colocated vertices, remove degenerate/duplicate facets, connect and reorient facets."},
+        {"header": "algorithms.h", "name": "georo::fill_holes",
+         "doc": "Fill holes smaller than max_area with fewer than max_edges border edges."},
+        {"header": "algorithms.h", "name": "georo::tessellate_facets",
+         "doc": "Subdivide facets with more than max_nb_vertices vertices (3 triangulates the mesh)."},
+
+        {"header": "algorithms.h", "name": "georo::make_atlas",
+         "doc": "Segment into charts, flatten (projection|lscm|spectral|abf) and pack (none|tetris|xatlas) in texture space; read the UVs back with Mesh.tex_coords()."},
+        {"header": "algorithms.h", "name": "georo::get_charts",
+         "doc": "Number of charts of a parameterized mesh."},
+
+        {"header": "algorithms.h", "name": "georo::mesh_union",
+         "doc": "Boolean union of two closed surface meshes."},
+        {"header": "algorithms.h", "name": "georo::mesh_intersection",
+         "doc": "Boolean intersection of two closed surface meshes."},
+        {"header": "algorithms.h", "name": "georo::mesh_difference",
+         "doc": "Boolean difference of two closed surface meshes."},
+        {"header": "algorithms.h", "name": "georo::mesh_remove_intersections",
+         "doc": "Resolve the self-intersections of a surface mesh."},
+        {"header": "algorithms.h", "name": "georo::mesh_facets_have_intersection",
+         "doc": "Test whether two facets of a mesh intersect."},
+
+        {"header": "algorithms.h", "name": "georo::csg_evaluate_string",
+         "doc": "Evaluate an OpenSCAD-style .csg program from a string (sphere, cube, cylinder, union, difference, intersection, transforms, ...)."},
+        {"header": "algorithms.h", "name": "georo::csg_evaluate_file",
+         "doc": "Evaluate an OpenSCAD-style .csg / .scad file."}
+    ]
+}
