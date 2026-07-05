@@ -22,7 +22,7 @@
         "./extern/geogram/src/lib/geogram/third_party",
         "./extern/geogram/src/lib/geogram/third_party/libMeshb/sources"
     ],
-    "rosetta_include": "../rosetta/include",
+    "rosetta_include": "./extern/rosetta/include",
     "generator_name": "geogram",
     "module_name": "geogram",
 

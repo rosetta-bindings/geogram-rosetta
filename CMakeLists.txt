@@ -1,8 +1,8 @@
 # -------------------------------------------------------------------
-# Bootstrap only: fetches geogram into extern/ and builds the
-# rosetta_gen tool. The bindings themselves are NOT built here — see
-# README.md (rosetta_gen -> generator -> per-language projects under
-# bindings/).
+# Bootstrap only: fetches geogram AND rosetta into extern/ and builds
+# the rosetta_gen tool (-> extern/rosetta/bin/rosetta_gen). The
+# bindings themselves are NOT built here — see README.md
+# (rosetta_gen -> generator -> per-language projects under bindings/).
 #
 #   cmake -B build && cmake --build build
 # -------------------------------------------------------------------
@@ -38,21 +38,30 @@ if(NOT EXISTS ${CMAKE_SOURCE_DIR}/extern/geogram/src/lib/geogram/mesh/mesh.h)
 endif()
 
 # ----------------------------------------------------------------------------
-# ROSETTA — expected as a sibling checkout (../rosetta), like the other
-# *-rosetta projects; the manifest's "rosetta_include" points there too.
-# The rosetta_gen code generator lives in tools/ and has its own
-# standalone CMakeLists.txt — build it as a subdirectory.
-# NOTE: rosetta_gen requires CMake >= 3.28.
+# ROSETTA library — fetched into extern/ like geogram (sources only; the
+# manifest's "rosetta_include" points to extern/rosetta/include).
+# Same guard as geogram: an existing checkout (or a symlink to a local
+# working copy) is left untouched.
 # ----------------------------------------------------------------------------
-set(ROSETTA_SOURCE_DIR ${CMAKE_SOURCE_DIR}/../rosetta)
-if(NOT EXISTS ${ROSETTA_SOURCE_DIR}/include/rosetta/generate.h)
-    message(FATAL_ERROR
-        "rosetta not found at ${ROSETTA_SOURCE_DIR} — clone "
-        "https://github.com/xaliphostes/rosetta.git next to this project.")
+if(NOT EXISTS ${CMAKE_SOURCE_DIR}/extern/rosetta/include/rosetta/generate.h)
+    message(STATUS "Fetching Rosetta library...")
+    FetchContent_Declare(
+        rosetta
+        GIT_REPOSITORY https://github.com/xaliphostes/rosetta.git
+        GIT_TAG        main
+        GIT_SHALLOW    TRUE
+        SOURCE_DIR ${CMAKE_SOURCE_DIR}/extern/rosetta
+        BINARY_DIR ${CMAKE_BINARY_DIR}/extern/rosetta-build
+    )
+    FetchContent_Populate(rosetta)
 endif()
 
+# The rosetta_gen code generator lives in tools/ and has its own standalone
+# CMakeLists.txt — build it as a subdirectory. Its binary always lands in
+# <rosetta>/bin, i.e. extern/rosetta/bin/rosetta_gen.
+# NOTE: rosetta_gen requires CMake >= 3.28.
 message(STATUS "Building rosetta_gen tool...")
 add_subdirectory(
-    ${ROSETTA_SOURCE_DIR}/tools/rosetta_gen
+    ${CMAKE_SOURCE_DIR}/extern/rosetta/tools/rosetta_gen
     ${CMAKE_BINARY_DIR}/extern/rosetta_gen-build
 )
