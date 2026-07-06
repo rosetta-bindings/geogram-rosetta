@@ -69,14 +69,17 @@ createModule().then((Module) => {
 
     // ----------------------------------------------------------- Remeshing ---
     const remeshed = new Module.Mesh();
-    Module.remesh_smooth(union, remeshed, 5000, 5, 30, 7);
+    // every parameter explicit (rosetta does not capture C++ defaults)
+    Module.remesh_smooth(union, remeshed, 5000, 0, 5, 30, 7, true, 0.5, 2.0);
     console.log(`remeshing  : union remeshed to ${remeshed.nb_vertices()} ` +
                 `vertices, ${remeshed.nb_facets()} facets`);
 
     // ----------------------------------- Parameterization and texturing ---
-    Module.make_atlas(remeshed, 45.0, "lscm", "xatlas", false);
+    Module.mesh_make_atlas(remeshed, 45.0,
+        Module.ChartParameterizer.PARAM_LSCM,
+        Module.ChartPacker.PACK_XATLAS, false);
     const uv = fromVector(remeshed.tex_coords());
-    console.log(`texturing  : ${Module.get_charts(remeshed)} charts, ` +
+    console.log(`texturing  : ${Module.mesh_get_charts(remeshed)} charts, ` +
                 `${uv.length / 2} UV corners in ` +
                 `[${Math.min(...uv).toFixed(3)}, ` +
                 `${Math.max(...uv).toFixed(3)}]`);
@@ -89,13 +92,13 @@ createModule().then((Module) => {
     console.log(`pointcloud : ${points.nb_vertices()} points, ` +
                 `${points.nb_facets()} facets`);
 
-    Module.co3ne_smooth_and_reconstruct(points, 30, 2, 2.0);
+    Module.Co3Ne_smooth_and_reconstruct(points, 30, 2, 2.0);
     console.log(`reconstruct: Co3Ne rebuilt ${points.nb_facets()} facets ` +
                 `from the point cloud`);
 
     // ----------------------------------------------------------- Repair ---
-    Module.mesh_repair(points, 0.0);
-    Module.fill_holes(points, 1e30, 2000);
+    Module.mesh_repair(points, Module.MeshRepairMode.MESH_REPAIR_DEFAULT, 0.0);
+    Module.fill_holes(points, 1e30, 2000, true);
     console.log(`repair     : after repair + fill_holes -> ` +
                 `${points.nb_facets()} facets`);
 

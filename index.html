@@ -377,7 +377,7 @@
             mesh.set_surface(vc, vt);
             vc.delete(); vt.delete();
             original = new Module.Mesh();
-            original.assign(mesh);
+            original.copy(mesh, true, Module.MeshElementsFlags.MESH_ALL_ELEMENTS);
             log(`  built GEO::Mesh (${((performance.now() - t) / 1000).toFixed(1)} s)`);
             refresh(true);
         }
@@ -415,20 +415,20 @@
             enable(true);
         }
 
-        $('repair').onclick = () => run('mesh_repair', () => Module.mesh_repair(mesh, 0.0));
-        $('holes').onclick = () => run('fill_holes', () => Module.fill_holes(mesh, 1e30, 10000));
+        $('repair').onclick = () => run('mesh_repair', () => Module.mesh_repair(mesh, Module.MeshRepairMode.MESH_REPAIR_DEFAULT, 0.0));
+        $('holes').onclick = () => run('fill_holes', () => Module.fill_holes(mesh, 1e30, 10000, true));
         $('remesh').onclick = () => {
             const n = Math.max(4, $('npts').valueAsNumber | 0);
             const lloyd = Math.max(0, $('lloyd').valueAsNumber | 0);
             const newton = Math.max(0, $('newton').valueAsNumber | 0);
             run(`remesh_smooth to ${n.toLocaleString()} points (${lloyd} Lloyd + ${newton} Newton)`, () => {
                 const out = new Module.Mesh();
-                Module.remesh_smooth(mesh, out, n, lloyd, newton, 7);
+                Module.remesh_smooth(mesh, out, n, 0, lloyd, newton, 7, true, 0.5, 2.0);
                 mesh.delete();
                 mesh = out;
             });
         };
-        $('reset').onclick = () => run('reset to original scan', () => mesh.assign(original));
+        $('reset').onclick = () => run('reset to original scan', () => mesh.copy(original, true, Module.MeshElementsFlags.MESH_ALL_ELEMENTS));
 
         // ------------------------------------------------------------------- boot
         createModule().then((mod) => {

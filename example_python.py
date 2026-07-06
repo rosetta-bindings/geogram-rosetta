@@ -57,7 +57,10 @@ union.save("out_union.obj")
 # ------------------------------------------------------------- Remeshing ---
 # Isotropic remesh of the union to 5000 points.
 remeshed = geo.Mesh()
-geo.remesh_smooth(union, remeshed, 5000, 5, 30, 7)
+# (M_in, M_out, nb_points, dim, Lloyd iters, Newton iters, Newton m,
+#  adjust, adjust_max_edge_distance, adjust_border_importance) — rosetta
+# does not capture C++ default arguments, so every parameter is explicit.
+geo.remesh_smooth(union, remeshed, 5000, 0, 5, 30, 7, True, 0.5, 2.0)
 print(f"remeshing  : union remeshed to {remeshed.nb_vertices()} vertices, "
       f"{remeshed.nb_facets()} facets")
 remeshed.save("out_remeshed.obj")
@@ -65,11 +68,12 @@ remeshed.save("out_remeshed.obj")
 # ------------------------------------- Parameterization and texturing ---
 # Build a UV atlas of the remeshed surface (LSCM + xatlas packing) and
 # read the texture coordinates back (6 values per triangle).
-geo.make_atlas(remeshed, 45.0, "lscm", "xatlas", False)
+geo.mesh_make_atlas(remeshed, 45.0, geo.ChartParameterizer.PARAM_LSCM,
+                    geo.ChartPacker.PACK_XATLAS, False)
 uv = remeshed.tex_coords()
 tri = remeshed.triangles()
 assert len(uv) == 2 * len(tri), "one (u,v) per triangle corner"
-print(f"texturing  : {geo.get_charts(remeshed)} charts, "
+print(f"texturing  : {geo.mesh_get_charts(remeshed)} charts, "
       f"{len(uv) // 2} UV corners in "
       f"[{min(uv):.3f}, {max(uv):.3f}]")
 
@@ -82,14 +86,14 @@ print(f"pointcloud : {points.nb_vertices()} points, "
       f"{points.nb_facets()} facets")
 
 # radius ~ average spacing x a few; the sphere pair is ~36 across.
-geo.co3ne_smooth_and_reconstruct(points, 30, 2, 2.0)
+geo.Co3Ne_smooth_and_reconstruct(points, 30, 2, 2.0)
 print(f"reconstruct: Co3Ne rebuilt {points.nb_facets()} facets "
       f"from the point cloud")
 points.save("out_reconstructed.obj")
 
 # ------------------------------------------------------------- Repair ---
-geo.mesh_repair(points, 0.0)
-geo.fill_holes(points, 1e30, 2000)
+geo.mesh_repair(points, geo.MeshRepairMode.MESH_REPAIR_DEFAULT, 0.0)
+geo.fill_holes(points, 1e30, 2000, True)
 print(f"repair     : after repair + fill_holes -> "
       f"{points.nb_facets()} facets")
 

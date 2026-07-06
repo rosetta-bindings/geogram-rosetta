@@ -60,16 +60,20 @@ console.log(`booleans   : union ${union.nb_facets()}, ` +
 
 // ------------------------------------------------------------- Remeshing ---
 const remeshed = new geo.Mesh();
-geo.remesh_smooth(union, remeshed, 5000, 5, 30, 7);
+// (M_in, M_out, nb_points, dim, Lloyd, Newton, Newton_m, adjust,
+//  adjust_max_edge_distance, adjust_border_importance) — rosetta does not
+// capture C++ default arguments, so every parameter is explicit.
+geo.remesh_smooth(union, remeshed, 5000, 0, 5, 30, 7, true, 0.5, 2.0);
 console.log(`remeshing  : union remeshed to ${remeshed.nb_vertices()} ` +
             `vertices, ${remeshed.nb_facets()} facets`);
 
 // ------------------------------------- Parameterization and texturing ---
-geo.make_atlas(remeshed, 45.0, "lscm", "xatlas", false);
+geo.mesh_make_atlas(remeshed, 45.0, geo.ChartParameterizer.PARAM_LSCM,
+                    geo.ChartPacker.PACK_XATLAS, false);
 const uv = remeshed.tex_coords();
 const tri = remeshed.triangles();
 console.assert(uv.length === 2 * tri.length, "one (u,v) per corner");
-console.log(`texturing  : ${geo.get_charts(remeshed)} charts, ` +
+console.log(`texturing  : ${geo.mesh_get_charts(remeshed)} charts, ` +
             `${uv.length / 2} UV corners in ` +
             `[${Math.min(...uv).toFixed(3)}, ${Math.max(...uv).toFixed(3)}]`);
 
@@ -79,13 +83,13 @@ points.set_points(remeshed.vertices());
 console.log(`pointcloud : ${points.nb_vertices()} points, ` +
             `${points.nb_facets()} facets`);
 
-geo.co3ne_smooth_and_reconstruct(points, 30, 2, 2.0);
+geo.Co3Ne_smooth_and_reconstruct(points, 30, 2, 2.0);
 console.log(`reconstruct: Co3Ne rebuilt ${points.nb_facets()} facets ` +
             `from the point cloud`);
 
 // ------------------------------------------------------------- Repair ---
-geo.mesh_repair(points, 0.0);
-geo.fill_holes(points, 1e30, 2000);
+geo.mesh_repair(points, geo.MeshRepairMode.MESH_REPAIR_DEFAULT, 0.0);
+geo.fill_holes(points, 1e30, 2000, true);
 console.log(`repair     : after repair + fill_holes -> ` +
             `${points.nb_facets()} facets`);
 

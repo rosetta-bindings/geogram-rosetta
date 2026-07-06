@@ -1,106 +1,43 @@
 #pragma once
 
-#include "Mesh.h"
+#include "geogram_mesh.h"
 #include <string>
 
-// Free functions mirroring geogram's algorithm API, expressed on the
-// georo::Mesh wrapper. Each one is a one-line delegation to the
-// corresponding GEO:: function (see algorithms.cpp) — no algorithmic code
-// lives here.
+// The few free functions geogram's own API cannot expose directly:
+//   - initialize():   GEO::initialize + the CmdLine argument groups the
+//                     algorithms read their tuning parameters from;
+//   - the boolean helpers: GEO::mesh_union / mesh_intersection /
+//                     mesh_difference are overloaded (enum-flags and
+//                     bool-verbose variants) and ^^name is ill-formed for
+//                     an overload set;
+//   - the CSG entry points: CSGCompiler::compile_* return
+//                     std::shared_ptr<Mesh>, which no backend marshals.
 //
-// All functions lazily initialize geogram (GEO::initialize + command-line
-// arg groups) on first use; call initialize(true) first if you want
-// geogram's log output.
+// Everything else — remesh_smooth, mesh_repair, fill_holes,
+// tessellate_facets, Co3Ne_*, mesh_make_atlas, mesh_get_charts,
+// mesh_remove_intersections, mesh_facets_have_intersection — is bound
+// straight from the GEO:: headers in manifest.json.
 namespace georo {
 
-    // Initialize geogram and import the command-line argument groups the
-    // algorithms read their tuning parameters from. Called automatically by
-    // every function below; call it explicitly with verbose=true to enable
-    // geogram's logger output.
+    // Initialize geogram and import the command-line argument groups. Call
+    // it first (with verbose=true to enable geogram's logger); the georo
+    // helpers also run it lazily.
     void initialize(bool verbose);
 
     // ------------------------------------------------------------------
-    // Surface reconstruction (Co3Ne: Concurrent Co-Cones)
+    // Boolean operations (A and B must be closed surface meshes without
+    // self-intersections).
     // ------------------------------------------------------------------
-
-    // Smooth a point cloud by projection onto the best approximating plane
-    // of the nb_neighbors nearest neighbors.
-    void co3ne_smooth(Mesh &points, int nb_neighbors, int nb_iterations);
-
-    // Smooth a point cloud then reconstruct a triangulated surface.
-    // radius is the maximum distance used to connect neighbors with
-    // triangles. The mesh is modified in place: on exit it contains the
-    // reconstructed surface.
-    void co3ne_smooth_and_reconstruct(Mesh &points, int nb_neighbors,
-                                      int nb_iterations, double radius);
-
-    // ------------------------------------------------------------------
-    // Remeshing
-    // ------------------------------------------------------------------
-
-    // Isotropic remeshing by Centroidal Voronoi Tesselation: resample
-    // input with nb_points, optimized by nb_lloyd_iter Lloyd iterations
-    // then nb_newton_iter Newton iterations (newton_m evaluations per
-    // step, 7 is a good value).
-    void remesh_smooth(Mesh &input, Mesh &output, int nb_points,
-                       int nb_lloyd_iter, int nb_newton_iter, int newton_m);
-
-    // ------------------------------------------------------------------
-    // Repair
-    // ------------------------------------------------------------------
-
-    // Glue colocated vertices / remove degenerate and duplicated facets,
-    // connect and reorient the facets (default geogram repair mode).
-    // colocate_epsilon is the tolerance used to merge vertices (0 = exact).
-    void mesh_repair(Mesh &M, double colocate_epsilon);
-
-    // Fill the holes whose area is smaller than max_area and with fewer
-    // than max_edges border edges.
-    void fill_holes(Mesh &M, double max_area, int max_edges);
-
-    // Subdivide facets with more than max_nb_vertices vertices
-    // (max_nb_vertices = 3 triangulates the mesh).
-    void tessellate_facets(Mesh &M, int max_nb_vertices);
-
-    // ------------------------------------------------------------------
-    // Parameterization and texturing
-    // ------------------------------------------------------------------
-
-    // Segment the (triangulated) mesh into charts, flatten each chart and
-    // pack them in texture space. The u,v coordinates are stored in the
-    // mesh and read back with Mesh::tex_coords().
-    //  - hard_angles_threshold: dihedral angles larger than this (degrees)
-    //    are chart boundaries
-    //  - parameterizer: "projection", "lscm", "spectral" or "abf"
-    //  - packer: "none", "tetris" or "xatlas"
-    void make_atlas(Mesh &M, double hard_angles_threshold,
-                    const std::string &parameterizer, const std::string &packer,
-                    bool verbose);
-
-    // Number of charts of a parameterized mesh (stored in the "chart"
-    // facet attribute by make_atlas).
-    int get_charts(Mesh &M);
-
-    // ------------------------------------------------------------------
-    // Intersections and Boolean operations
-    // ------------------------------------------------------------------
-    // A and B must be closed surface meshes without self-intersections.
 
     // result = A ∪ B
-    void mesh_union(Mesh &result, const Mesh &A, const Mesh &B, bool verbose);
+    void mesh_union(GEO::Mesh &result, const GEO::Mesh &A, const GEO::Mesh &B,
+                    bool verbose);
     // result = A ∩ B
-    void mesh_intersection(Mesh &result, const Mesh &A, const Mesh &B,
-                           bool verbose);
+    void mesh_intersection(GEO::Mesh &result, const GEO::Mesh &A,
+                           const GEO::Mesh &B, bool verbose);
     // result = A − B
-    void mesh_difference(Mesh &result, const Mesh &A, const Mesh &B,
-                         bool verbose);
-
-    // Resolve the self-intersections of a surface mesh (at most max_iter
-    // passes of intersection removal / re-triangulation).
-    void mesh_remove_intersections(Mesh &M, int max_iter, bool verbose);
-
-    // Test whether two facets of the same mesh intersect.
-    bool mesh_facets_have_intersection(Mesh &M, int f1, int f2);
+    void mesh_difference(GEO::Mesh &result, const GEO::Mesh &A,
+                         const GEO::Mesh &B, bool verbose);
 
     // ------------------------------------------------------------------
     // Constructive Solid Geometry
@@ -117,10 +54,11 @@ namespace georo {
     //   multmatrix([[1,0,0,tx],[0,1,0,ty],[0,0,1,tz],[0,0,0,1]]) { ... }
 
     // Evaluate a CSG program from a source string into result.
-    bool csg_evaluate_string(const std::string &source, Mesh &result,
+    bool csg_evaluate_string(const std::string &source, GEO::Mesh &result,
                              bool verbose);
 
     // Evaluate a .csg / .scad file into result.
-    bool csg_evaluate_file(const std::string &path, Mesh &result, bool verbose);
+    bool csg_evaluate_file(const std::string &path, GEO::Mesh &result,
+                           bool verbose);
 
 } // namespace georo
