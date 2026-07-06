@@ -31,7 +31,8 @@
         {"lang": "python-expanded", "name": "geogram"},
         {"lang": "node-expanded",   "name": "geogram"},
         {"lang": "wasm-expanded",   "name": "geogram", "link_options": ["-lnodefs.js"]},
-        {"lang": "typescript",      "name": "geogram"}
+        {"lang": "typescript",      "name": "geogram"},
+        {"lang": "lua-expanded",    "name": "geogram"}
     ],
 
     "user_sources": [

@@ -206,7 +206,7 @@ class Viewer(QtWidgets.QMainWindow):
             smooth_shading=not self.c_flat.isChecked())
         wire = self.plotter.add_mesh(
             poly, name="wire", style="wireframe", color="#dddddd",
-            opacity=0.35, line_width=1)
+            opacity=0.35, line_width=2)
         pts = self.plotter.add_mesh(
             poly.points, name="cloud", color="#7fd0ff", point_size=3,
             render_points_as_spheres=False)
