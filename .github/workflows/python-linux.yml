@@ -1,0 +1,108 @@
+# Generate and compile the Python binding on Linux.
+#
+# The generation step (gen/) needs the Bloomberg clang-p2996 reflection
+# fork; there are no prebuilt binaries, so the first run builds it from
+# source (~2-3 h on a hosted runner) and caches a trimmed toolchain
+# (~300 MB). Subsequent runs restore the cache and finish in minutes.
+# Everything else (bootstrap, rosetta_gen, python-expanded) compiles
+# with the stock toolchain.
+name: python-binding-linux
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: python-linux-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Same location the manifest's cpp26_* defaults expand to on the runner.
+  P2996_ROOT: /home/runner/devs/c++/clang-p2996/build
+  # Bump to force a toolchain rebuild (e.g. to pick up a newer p2996).
+  P2996_CACHE_KEY: clang-p2996-linux-x86_64-v1
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      # ---------------------------------------------- clang-p2996 toolchain
+      - name: Restore clang-p2996 toolchain
+        id: p2996-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.P2996_ROOT }}
+          key: ${{ env.P2996_CACHE_KEY }}
+
+      - name: Build clang-p2996 (cache miss only)
+        if: steps.p2996-cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update && sudo apt-get install -y ninja-build lld
+          git clone --depth 1 --branch p2996 \
+              https://github.com/bloomberg/clang-p2996 /tmp/clang-p2996
+          # Same configuration as the local toolchain (Release, clang +
+          # libc++/libc++abi runtimes, runtimes in build/lib not a
+          # per-target dir), plus Linux-only necessities: X86 target,
+          # default stdlib libc++ (Linux clang defaults to libstdc++,
+          # which has no <experimental/meta>), lld and 2 link jobs to
+          # stay inside the runner's RAM.
+          cmake -S /tmp/clang-p2996/llvm -B /tmp/p2996-build -G Ninja \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DLLVM_ENABLE_PROJECTS=clang \
+              -DLLVM_ENABLE_RUNTIMES="libcxx;libcxxabi" \
+              -DLLVM_TARGETS_TO_BUILD=X86 \
+              -DLLVM_ENABLE_PER_TARGET_RUNTIME_DIR=OFF \
+              -DCLANG_DEFAULT_CXX_STDLIB=libc++ \
+              -DLLVM_ENABLE_ASSERTIONS=OFF \
+              -DLLVM_INCLUDE_TESTS=OFF \
+              -DLLVM_INCLUDE_EXAMPLES=OFF \
+              -DLLVM_INCLUDE_BENCHMARKS=OFF \
+              -DLLVM_USE_LINKER=lld \
+              -DLLVM_PARALLEL_LINK_JOBS=2
+          ninja -C /tmp/p2996-build clang runtimes
+          # Keep only what the gen project uses: the clang driver, its
+          # resource dir (lib/clang/<ver>), the libc++ headers and the
+          # libc++/libc++abi shared libraries. The full build tree is
+          # tens of GB; this fits the actions cache.
+          mkdir -p "$P2996_ROOT/bin" "$P2996_ROOT/lib" "$P2996_ROOT/include"
+          cp -a /tmp/p2996-build/bin/clang* "$P2996_ROOT/bin/"
+          cp -a /tmp/p2996-build/lib/clang "$P2996_ROOT/lib/"
+          cp -a /tmp/p2996-build/lib/libc++* "$P2996_ROOT/lib/"
+          cp -a /tmp/p2996-build/include/c++ "$P2996_ROOT/include/"
+          rm -rf /tmp/p2996-build
+
+      # -------------------------------------------------- binding pipeline
+      - name: Bootstrap (fetch geogram + rosetta, build rosetta_gen)
+        run: cmake -B build && cmake --build build
+
+      - name: Generate and build the generator
+        run: |
+          ./extern/rosetta/bin/rosetta_gen manifest.json gen
+          cmake -S gen -B gen/build
+          cmake --build gen/build
+
+      - name: Generate the binding projects
+        run: ./generator bindings
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Build the Python binding
+        run: |
+          pip install pybind11
+          cmake -S bindings/python-expanded -B bindings/python-expanded/build
+          cmake --build bindings/python-expanded/build -j
+
+      - name: Smoke test (example_python.py)
+        run: python3 example_python.py
+
+      - name: Upload module
+        uses: actions/upload-artifact@v4
+        with:
+          name: geogram-python-linux-x86_64
+          path: bindings/python-expanded/build/geogram*.so
