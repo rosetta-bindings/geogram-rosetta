@@ -27,7 +27,7 @@ ok = geo.csg_evaluate_string(
 )
 assert ok, "CSG evaluation failed"
 print(f"CSG        : sphere minus cylinder -> "
-      f"{csg.nb_vertices()} vertices, {csg.nb_facets()} facets")
+      f"{csg.vertices.nb()} vertices, {csg.facets.nb()} facets")
 csg.save("out_csg.obj")
 
 # ----------------------------------------------------- Boolean operations ---
@@ -49,9 +49,9 @@ inter = geo.Mesh()
 geo.mesh_intersection(inter, a, b, False)
 diff = geo.Mesh()
 geo.mesh_difference(diff, a, b, False)
-print(f"booleans   : union {union.nb_facets()}, "
-      f"intersection {inter.nb_facets()}, "
-      f"difference {diff.nb_facets()} facets")
+print(f"booleans   : union {union.facets.nb()}, "
+      f"intersection {inter.facets.nb()}, "
+      f"difference {diff.facets.nb()} facets")
 union.save("out_union.obj")
 
 # ------------------------------------------------------------- Remeshing ---
@@ -61,8 +61,8 @@ remeshed = geo.Mesh()
 #  adjust, adjust_max_edge_distance, adjust_border_importance) — rosetta
 # does not capture C++ default arguments, so every parameter is explicit.
 geo.remesh_smooth(union, remeshed, 5000, 0, 5, 30, 7, True, 0.5, 2.0)
-print(f"remeshing  : union remeshed to {remeshed.nb_vertices()} vertices, "
-      f"{remeshed.nb_facets()} facets")
+print(f"remeshing  : union remeshed to {remeshed.vertices.nb()} vertices, "
+      f"{remeshed.facets.nb()} facets")
 remeshed.save("out_remeshed.obj")
 
 # ------------------------------------- Parameterization and texturing ---
@@ -80,14 +80,18 @@ print(f"texturing  : {geo.mesh_get_charts(remeshed)} charts, "
 # ------------------------------------------------- Surface reconstruction ---
 # Turn the remeshed surface into a bare point cloud, then reconstruct a
 # surface from the points alone with Co3Ne (smooth + co-cone triangles).
+# Geometry moves through geogram's own API: remeshing can leave
+# higher-dimensional points (normals appended), so truncate to xyz before
+# reading the flat coordinate array back.
+remeshed.vertices.set_dimension(3)
 points = geo.Mesh()
-points.set_points(remeshed.vertices())
-print(f"pointcloud : {points.nb_vertices()} points, "
-      f"{points.nb_facets()} facets")
+points.vertices.assign_points(remeshed.vertices.point_coordinates(), 3, False)
+print(f"pointcloud : {points.vertices.nb()} points, "
+      f"{points.facets.nb()} facets")
 
 # radius ~ average spacing x a few; the sphere pair is ~36 across.
 geo.Co3Ne_smooth_and_reconstruct(points, 30, 2, 2.0)
-print(f"reconstruct: Co3Ne rebuilt {points.nb_facets()} facets "
+print(f"reconstruct: Co3Ne rebuilt {points.facets.nb()} facets "
       f"from the point cloud")
 points.save("out_reconstructed.obj")
 
@@ -95,6 +99,6 @@ points.save("out_reconstructed.obj")
 geo.mesh_repair(points, geo.MeshRepairMode.MESH_REPAIR_DEFAULT, 0.0)
 geo.fill_holes(points, 1e30, 2000, True)
 print(f"repair     : after repair + fill_holes -> "
-      f"{points.nb_facets()} facets")
+      f"{points.facets.nb()} facets")
 
 print("OK")

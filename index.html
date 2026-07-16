@@ -310,8 +310,13 @@
         }
 
         // Pull positions + triangles out of the wasm mesh into the three.js buffers.
+        // mesh.vertices() / mesh.facets() are borrowed handles to the member
+        // objects inside the mesh (do not .delete() them). Remeshing can leave
+        // higher-dimensional points (normals appended) — truncate to xyz first.
         function refresh(fit = false) {
-            const positions = fromVectorF32(mesh.vertices());
+            const vs = mesh.vertices();
+            if (vs.dimension() > 3) vs.set_dimension(3);
+            const positions = fromVectorF32(vs.point_coordinates());
             const indices = fromVectorU32(mesh.triangles());
 
             const geom = new THREE.BufferGeometry();
@@ -329,8 +334,8 @@
             cloud.geometry = pts;
 
             $('stats').textContent =
-                `${mesh.nb_vertices().toLocaleString()} vertices · ` +
-                `${mesh.nb_facets().toLocaleString()} facets`;
+                `${mesh.vertices().nb().toLocaleString()} vertices · ` +
+                `${mesh.facets().nb().toLocaleString()} facets`;
             if (fit) fitView();
         }
 
@@ -371,11 +376,15 @@
 
             t = performance.now();
             const vc = toVector('vector_double', coords);
-            const vt = toVector('vector_int', tris);
+            const vt = toVector('vector_unsigned_int', tris); // assign_triangle_mesh takes index_t
             mesh?.delete(); original?.delete();
             mesh = new Module.Mesh();
-            mesh.set_surface(vc, vt);
+            mesh.facets().assign_triangle_mesh(3, vc, vt, false);
             vc.delete(); vt.delete();
+            // assign_triangle_mesh does not compute facet adjacency
+            // (facets().connect() is an overload set — not bound); repair
+            // with epsilon 0 connects + reorients without moving vertices.
+            Module.mesh_repair(mesh, Module.MeshRepairMode.MESH_REPAIR_DEFAULT, 0.0);
             original = new Module.Mesh();
             original.copy(mesh, true, Module.MeshElementsFlags.MESH_ALL_ELEMENTS);
             log(`  built GEO::Mesh (${((performance.now() - t) / 1000).toFixed(1)} s)`);

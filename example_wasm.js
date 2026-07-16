@@ -14,6 +14,9 @@
 //     element (.size() / .get(i)).
 //   * Objects created on the C++ heap (meshes, vectors) must be released
 //     with .delete() — embind does not garbage-collect them.
+//   * mesh.vertices() / mesh.facets() return borrowed (non-owning) handles
+//     to the member objects living inside the mesh — do NOT .delete() them,
+//     and don't use them after the mesh itself is deleted.
 
 const createModule = require("./bindings/wasm-expanded/build/geogram.js");
 
@@ -45,7 +48,7 @@ createModule().then((Module) => {
     );
     console.assert(ok, "CSG evaluation failed");
     console.log(`CSG        : sphere minus cylinder -> ` +
-                `${csg.nb_vertices()} vertices, ${csg.nb_facets()} facets`);
+                `${csg.vertices().nb()} vertices, ${csg.facets().nb()} facets`);
 
     // --------------------------------------------------- Boolean operations ---
     const a = new Module.Mesh();
@@ -63,16 +66,16 @@ createModule().then((Module) => {
     Module.mesh_intersection(inter, a, b, false);
     const diff = new Module.Mesh();
     Module.mesh_difference(diff, a, b, false);
-    console.log(`booleans   : union ${union.nb_facets()}, ` +
-                `intersection ${inter.nb_facets()}, ` +
-                `difference ${diff.nb_facets()} facets`);
+    console.log(`booleans   : union ${union.facets().nb()}, ` +
+                `intersection ${inter.facets().nb()}, ` +
+                `difference ${diff.facets().nb()} facets`);
 
     // ----------------------------------------------------------- Remeshing ---
     const remeshed = new Module.Mesh();
     // every parameter explicit (rosetta does not capture C++ defaults)
     Module.remesh_smooth(union, remeshed, 5000, 0, 5, 30, 7, true, 0.5, 2.0);
-    console.log(`remeshing  : union remeshed to ${remeshed.nb_vertices()} ` +
-                `vertices, ${remeshed.nb_facets()} facets`);
+    console.log(`remeshing  : union remeshed to ${remeshed.vertices().nb()} ` +
+                `vertices, ${remeshed.facets().nb()} facets`);
 
     // ----------------------------------- Parameterization and texturing ---
     Module.mesh_make_atlas(remeshed, 45.0,
@@ -85,22 +88,26 @@ createModule().then((Module) => {
                 `${Math.max(...uv).toFixed(3)}]`);
 
     // ----------------------------------------------- Surface reconstruction ---
-    const coords = remeshed.vertices(); // vector_double (owned by JS)
+    // Geometry moves through geogram's own API: remeshing can leave
+    // higher-dimensional points (normals appended), so truncate to xyz
+    // before reading the flat coordinate array back.
+    remeshed.vertices().set_dimension(3);
+    const coords = remeshed.vertices().point_coordinates(); // vector_double (owned by JS)
     const points = new Module.Mesh();
-    points.set_points(coords);
+    points.vertices().assign_points(coords, 3, false);
     coords.delete();
-    console.log(`pointcloud : ${points.nb_vertices()} points, ` +
-                `${points.nb_facets()} facets`);
+    console.log(`pointcloud : ${points.vertices().nb()} points, ` +
+                `${points.facets().nb()} facets`);
 
     Module.Co3Ne_smooth_and_reconstruct(points, 30, 2, 2.0);
-    console.log(`reconstruct: Co3Ne rebuilt ${points.nb_facets()} facets ` +
+    console.log(`reconstruct: Co3Ne rebuilt ${points.facets().nb()} facets ` +
                 `from the point cloud`);
 
     // ----------------------------------------------------------- Repair ---
     Module.mesh_repair(points, Module.MeshRepairMode.MESH_REPAIR_DEFAULT, 0.0);
     Module.fill_holes(points, 1e30, 2000, true);
     console.log(`repair     : after repair + fill_holes -> ` +
-                `${points.nb_facets()} facets`);
+                `${points.facets().nb()} facets`);
 
     [csg, a, b, union, inter, diff, remeshed, points].forEach((m) =>
         m.delete()

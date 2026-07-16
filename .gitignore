@@ -1,9 +1,10 @@
 # Prerequisites
 build/
-extern/
+extern/rosetta
 gen/
 generated/
 bindings/
+extern/
 
 .vscode
 .DS_Store
@@ -13,3 +14,6 @@ generator
 out_*
 __pycache__
 lkd.md
+
+geogram-issue-draft*
+test_member_object*

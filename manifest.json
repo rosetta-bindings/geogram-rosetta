@@ -1,11 +1,14 @@
 {
     "//": "Rosetta binding manifest for the Geogram library.",
     "//paths": "All relative paths resolve from THIS file's directory (the project root).",
-    "//design": "GEO::Mesh is bound DIRECTLY. Its public member objects (mesh.vertices, mesh.facets, ...) are non-copyable (they hold a Mesh& back-reference), so rosetta's copyability gates bind the class as an opaque handle, and the manifest 'extensions' attach free functions (src/mesh_ext.h) as instance methods for what those members can't marshal: flat-array geometry access, overloaded load/save, and the tex_coord facet-corner attribute. The GEO:: algorithms (remesh, repair, Co3Ne reconstruction, atlas, intersections) are bound straight from their headers; georo:: keeps only initialize(), the overloaded boolean helpers and the shared_ptr-returning CSG entry points (src/algorithms.h). NOTE: rosetta does not capture C++ default arguments — every parameter is explicit in the bindings.",
+    "//design": "GEO::Mesh is bound DIRECTLY, and so are its member objects: mesh.vertices / mesh.facets / mesh.facet_corners are member-object reference properties (non-copyable stores holding a Mesh& back-reference; 'final': true suppresses their trampolines — MeshVertices/MeshFacets have public virtuals — which is also what lets node alias them). Geometry moves through geogram's own API: vertices.assign_points / facets.assign_triangle_mesh / vertices.point_coordinates, whose GEO::vector<T> parameters marshal as flat script arrays via the 'sequences' trait (their raw-pointer overloads are declared second, so the walk keeps the sequence one). Only TWO extension functions remain (src/mesh_ext.h): triangles() and tex_coords(), which encode the fan-triangulation-of-polygons output policy. load()/save() are Mesh members upstream (non-overloaded, PR #373) and bind natively, like copy/clear/show_stats. The GEO:: algorithms (remesh, repair, Co3Ne reconstruction, atlas, intersections) are bound straight from their headers; georo:: keeps only initialize(), the overloaded boolean helpers and the shared_ptr-returning CSG entry points (src/algorithms.h). NOTE: rosetta does not capture C++ default arguments — every parameter is explicit in the bindings.",
     "//sources": "The geogram sources are compiled straight into every binding target (no prebuilt libgeogram: the wasm target needs the sources anyway, and a native lib built by another toolchain would risk an ABI mismatch). Globs are non-recursive, one per source dir. Optional parts guarded by GEOGRAM_WITH_TETGEN / _TRIANGLE / _LUA / _PDEL compile away. The vendored zlib/rply/libMeshb/OpenNL are C sources (the generated projects enable_language(C)).",
     "//defines": "GEOGRAM_USE_BUILTIN_DEPS: mesh_io/geofile include the vendored libMeshb/rply/zlib instead of system libs. GEOGRAM_WITH_HLBFGS: compiles the HLBFGS optimizer in (required by the Newton iterations of CVT remeshing).",
-    "//version-h": "src/geogram/version.h stands in for the header geogram's own CMake would generate; src/ is listed before extern/geogram/src/lib so it wins the include lookup. src/geogram_mesh.h pre-includes <new> (geogram's memory.h needs it under the p2996 fork's libc++).",
+    "//version-h": "src/geogram/version.h stands in for the header geogram's own CMake would generate; src/ is listed before extern/geogram/src/lib so it wins the include lookup.",
     "//link-options": "Under Node, geogram's GEO::initialize() mounts the host filesystem with NODEFS (EM_ASM in basic/common.cpp), so the wasm link needs emscripten's nodefs.js library — exactly what geogram's own cmake/platforms/Emscripten-clang.cmake adds.",
+
+    "//sequences": "GEO::vector<T> marshals like std::vector<T> (flat script arrays) through rosetta's sequence adapters — this is what lets geogram's own assign_points / assign_triangle_mesh bind (their GEO::vector overload is declared first, so it survives the walk's overload dedup and the adapter resolves the call by name). Mutable GEO::vector& parameters bind input-only (steal_arg steals from the adapter's copy, which is fine).",
+    "sequences": ["GEO::vector"],
 
     "compile_definitions": [
         "GEOGRAM_USE_BUILTIN_DEPS",
@@ -57,30 +60,22 @@
     "classes": [
         {
             "name": "GEO::Mesh",
-            "header": "geogram_mesh.h",
-            "doc": "geogram's mesh, bound directly (opaque handle + extension methods). Geometry goes in and out as flat arrays: vertices [x0,y0,z0,...], triangles [v0,v1,v2,...]. load()/save() understand .obj, .off, .ply, .stl, .mesh/.meshb and .geogram.",
+            "header": "geogram/mesh/mesh.h",
+            "doc": "geogram's mesh, bound directly. Geometry moves through the member-object properties (mesh.vertices, mesh.facets, mesh.facet_corners) as flat arrays: vertices.assign_points([x0,y0,z0,...], 3, false), facets.assign_triangle_mesh(3, coords, tris, false), vertices.point_coordinates(). load()/save() understand .obj, .off, .ply, .stl, .mesh/.meshb and .geogram; call initialize() before I/O.",
             "extensions": [
-                {"name": "georo::load", "header": "mesh_ext.h",
-                 "doc": "Load from any format supported by geogram (.obj, .off, .ply, .stl, .mesh/.meshb, .geogram, ...)."},
-                {"name": "georo::save", "header": "mesh_ext.h",
-                 "doc": "Save to any format supported by geogram (chosen from the extension)."},
-                {"name": "georo::set_points", "header": "mesh_ext.h",
-                 "doc": "Set the mesh to a point cloud from a flat [x0,y0,z0,...] array."},
-                {"name": "georo::set_surface", "header": "mesh_ext.h",
-                 "doc": "Set the mesh to a triangulated surface (flat coordinate + triangle-index arrays); facets are connected."},
-                {"name": "georo::vertices", "header": "mesh_ext.h",
-                 "doc": "Vertex coordinates as a flat [x0,y0,z0,...] array."},
                 {"name": "georo::triangles", "header": "mesh_ext.h",
-                 "doc": "Triangle vertex indices, 3 per triangle (polygonal facets are fan-triangulated)."},
+                 "doc": "Triangle vertex indices, 3 per triangle (polygonal facets are fan-triangulated; a triangulated mesh is a bulk copy of facet_corners.vertex_indices())."},
                 {"name": "georo::tex_coords", "header": "mesh_ext.h",
-                 "doc": "UVs from mesh_make_atlas as a flat [u,v] array, one entry per triangle corner (aligned with triangles())."},
-                {"name": "georo::nb_vertices", "header": "mesh_ext.h",
-                 "doc": "Number of vertices."},
-                {"name": "georo::nb_facets", "header": "mesh_ext.h",
-                 "doc": "Number of facets."}
+                 "doc": "UVs from mesh_make_atlas as a flat [u,v] array, one entry per triangle corner (aligned with triangles())."}
             ]
         },
-        {"name": "GEO::MeshElementsFlags", "header": "geogram_mesh.h",
+        {"name": "GEO::MeshVertices", "header": "geogram/mesh/mesh.h", "final": true,
+         "doc": "The vertices of a Mesh, reached as the mesh.vertices member-object property: nb(), create_vertices(n), assign_points(coords, 3, false) with coords a flat [x0,y0,z0,...] array, point_coordinates() to read them back (set_dimension(3) first if the mesh may be higher-dimensional, e.g. after remesh_smooth)."},
+        {"name": "GEO::MeshFacets", "header": "geogram/mesh/mesh.h", "final": true,
+         "doc": "The facets of a Mesh, reached as the mesh.facets member-object property: nb(), nb_vertices(f), vertex(f,lv), assign_triangle_mesh(3, coords, triangles, false) with flat arrays. assign_triangle_mesh does not compute adjacency; run mesh_repair(M, MESH_REPAIR_DEFAULT, 0.0) after when the booleans/remeshing need connected facets."},
+        {"name": "GEO::MeshFacetCornersStore", "header": "geogram/mesh/mesh.h",
+         "doc": "The facet corners of a Mesh, reached as the mesh.facet_corners member-object property: nb(), vertex(c), set_vertex(c,v), adjacent_facet(c)."},
+        {"name": "GEO::MeshElementsFlags", "header": "geogram/mesh/mesh.h",
          "doc": "Element selector for Mesh.copy (MESH_VERTICES | MESH_FACETS | ... | MESH_ALL_ELEMENTS)."},
         {"name": "GEO::MeshRepairMode", "header": "geogram/mesh/mesh_repair.h",
          "doc": "Mode flags for mesh_repair (MESH_REPAIR_DEFAULT, ...)."},

@@ -36,7 +36,11 @@ DATA = Path(__file__).parent / "data" / "Intergalactic_Spaceship.obj"
 
 def to_polydata(mesh: "geo.Mesh") -> pv.PolyData:
     """GEO::Mesh -> pyvista surface (flat arrays -> (n,3) + VTK face list)."""
-    verts = np.asarray(mesh.vertices()).reshape(-1, 3)
+    # Remeshing can leave higher-dimensional points (normals appended) —
+    # truncate to xyz before reading the flat coordinate array back.
+    if mesh.vertices.dimension() > 3:
+        mesh.vertices.set_dimension(3)
+    verts = np.asarray(mesh.vertices.point_coordinates()).reshape(-1, 3)
     tris = np.asarray(mesh.triangles(), dtype=np.int64).reshape(-1, 3)
     faces = np.hstack([np.full((len(tris), 1), 3, dtype=np.int64), tris])
     return pv.PolyData(verts, faces.ravel())
@@ -212,8 +216,8 @@ class Viewer(QtWidgets.QMainWindow):
             render_points_as_spheres=False)
         wire.SetVisibility(self.c_wire.isChecked())
         pts.SetVisibility(self.c_points.isChecked())
-        self.stats.setText(f"{self.mesh.nb_vertices():,} vertices · "
-                           f"{self.mesh.nb_facets():,} facets")
+        self.stats.setText(f"{self.mesh.vertices.nb():,} vertices · "
+                           f"{self.mesh.facets.nb():,} facets")
         if fit:
             self.plotter.reset_camera()
         self.plotter.render()

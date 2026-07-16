@@ -1,6 +1,6 @@
 #pragma once
 
-#include "geogram_mesh.h"
+#include <geogram/mesh/mesh.h>
 #include <string>
 
 // The few free functions geogram's own API cannot expose directly:

@@ -23,7 +23,7 @@ local ok = geo.csg_evaluate_string(
     false)
 assert(ok, "CSG evaluation failed")
 print(string.format("CSG        : sphere minus cylinder -> %d vertices, %d facets",
-                    csg:nb_vertices(), csg:nb_facets()))
+                    csg.vertices:nb(), csg.facets:nb()))
 csg:save("out_csg.obj")
 
 -------------------------------------------------------- Boolean operations ---
@@ -45,7 +45,7 @@ geo.mesh_intersection(inter, a, b, false)
 local diff = geo.Mesh.new()
 geo.mesh_difference(diff, a, b, false)
 print(string.format("booleans   : union %d, intersection %d, difference %d facets",
-                    union:nb_facets(), inter:nb_facets(), diff:nb_facets()))
+                    union.facets:nb(), inter.facets:nb(), diff.facets:nb()))
 union:save("out_union.obj")
 
 ---------------------------------------------------------------- Remeshing ---
@@ -56,7 +56,7 @@ local remeshed = geo.Mesh.new()
 -- does not capture C++ default arguments, so every parameter is explicit.
 geo.remesh_smooth(union, remeshed, 5000, 0, 5, 30, 7, true, 0.5, 2.0)
 print(string.format("remeshing  : union remeshed to %d vertices, %d facets",
-                    remeshed:nb_vertices(), remeshed:nb_facets()))
+                    remeshed.vertices:nb(), remeshed.facets:nb()))
 remeshed:save("out_remeshed.obj")
 
 ---------------------------------------- Parameterization and texturing ---
@@ -78,21 +78,25 @@ print(string.format("texturing  : %d charts, %d UV corners in [%.3f, %.3f]",
 ---------------------------------------------------- Surface reconstruction ---
 -- Turn the remeshed surface into a bare point cloud, then reconstruct a
 -- surface from the points alone with Co3Ne (smooth + co-cone triangles).
+-- Geometry moves through geogram's own API: remeshing can leave
+-- higher-dimensional points (normals appended), so truncate to xyz before
+-- reading the flat coordinate array back.
+remeshed.vertices:set_dimension(3)
 local points = geo.Mesh.new()
-points:set_points(remeshed:vertices())
+points.vertices:assign_points(remeshed.vertices:point_coordinates(), 3, false)
 print(string.format("pointcloud : %d points, %d facets",
-                    points:nb_vertices(), points:nb_facets()))
+                    points.vertices:nb(), points.facets:nb()))
 
 -- radius ~ average spacing x a few; the sphere pair is ~36 across.
 geo.Co3Ne_smooth_and_reconstruct(points, 30, 2, 2.0)
 print(string.format("reconstruct: Co3Ne rebuilt %d facets from the point cloud",
-                    points:nb_facets()))
+                    points.facets:nb()))
 points:save("out_reconstructed.obj")
 
 ---------------------------------------------------------------- Repair ---
 geo.mesh_repair(points, geo.MeshRepairMode.MESH_REPAIR_DEFAULT, 0.0)
 geo.fill_holes(points, 1e30, 2000, true)
 print(string.format("repair     : after repair + fill_holes -> %d facets",
-                    points:nb_facets()))
+                    points.facets:nb()))
 
 print("OK")

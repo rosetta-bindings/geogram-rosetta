@@ -27,20 +27,38 @@ Language bindings for [Geogram](https://github.com/BrunoLevy/geogram) (a program
 | Intersections & Booleans | `mesh_union`, `mesh_intersection`, `mesh_difference`, `mesh_remove_intersections`, `mesh_facets_have_intersection` (exact arithmetic) |
 | CSG | `csg_evaluate_string`, `csg_evaluate_file` (OpenSCAD `.csg` programs: `sphere`, `cube`, `cylinder`, `union`, `difference`, `intersection`, `multmatrix`, `hull`, `minkowski`, `linear_extrude`, ...) |
 
-plus the enums `MeshElementsFlags`, `MeshRepairMode`, `ChartParameterizer`, `ChartPacker` and `GEO::Mesh`'s own marshalable methods (`copy`, `clear`, `show_stats`, `get_attributes`, ...).
+plus the enums `MeshElementsFlags`, `MeshRepairMode`, `ChartParameterizer`, `ChartPacker`, `GEO::Mesh`'s own marshalable methods (`load`, `save`, `copy`, `clear`, `show_stats`, `get_attributes`, ...) and its **member objects** `mesh.vertices` / `mesh.facets` / `mesh.facet_corners` — reference properties over the real stores, through which geometry moves as flat arrays via geogram's own API:
+
+```py
+m = geogram.Mesh()
+m.facets.assign_triangle_mesh(3, coords, tris, False)   # flat [x,y,z,...] + [v0,v1,v2,...]
+m.vertices.nb(), m.facets.nb()
+coords = m.vertices.point_coordinates()                 # flat [x,y,z,...] back
+```
+
+(`GEO::vector<T>` parameters and returns marshal as plain script arrays through rosetta's `sequences` trait.)
 
 ## Why is there still a `src/` folder?
 
 "No facade" removed the wrapper *class* — scripts hold the real `GEO::Mesh`
 and the algorithms are bound from geogram's own headers — not the last mile
-of glue. What remains is ~230 lines of stateless code, each file with a
-specific, known cause:
+of glue. Two rounds then shrank this folder further. First, binding-friendly
+API additions to geogram (bulk sized accessors `point_coordinates()` /
+`vertex_indices()`, type-erased `AttributesManager::get_doubles`/`set_doubles`,
+member `Mesh::load`/`save` — upstreamed as geogram PR #373). Second, three
+rosetta features: **member-object properties** (`mesh.vertices` /
+`mesh.facets` bind as references to the real stores; the manifest `final`
+flag suppresses their trampolines so node reaches them too), the
+**`sequences` trait** (`GEO::vector<T>` marshals as flat script arrays — and
+because the adapters call by name, the first-declared overloads
+`assign_points` / `assign_triangle_mesh` bind), which together deleted
+`set_points` / `set_surface` / `vertices` / `nb_vertices` / `nb_facets` from
+`mesh_ext`. What remains has a specific, known cause:
 
 | File | Why it exists | What would remove it |
 |---|---|---|
-| `mesh_ext.{h,cpp}` | **Irreducible in any binding framework.** `point_ptr()` returns a bare `double*` (no size — nothing reflection can do), the UVs live in a `GEO::Attribute<double>` *template instantiation* that only exists when C++ code writes it, and `mesh_load`/`mesh_save` are overload sets. Somebody has to write the `double*` → `std::vector` loop; manifest `extensions` only changed *where* it lives (free functions, no parallel type). | Nothing — a hand-written pybind11 binding would contain the same loops. |
-| `algorithms.{h,cpp}` | Three things `^^name` splicing can't reach: `initialize()` (GEO::initialize + CmdLine arg groups must run once), the boolean helpers (`GEO::mesh_union` & co are overload sets), and the CSG entry points (`CSGCompiler::compile_*` returns `std::shared_ptr<Mesh>`). | Future rosetta features: a manifest `module_init` hook, overload selection by explicit signature, `shared_ptr` return support. Each deletes its piece. |
-| `geogram_mesh.h` | 2-line workaround for a geogram bug: `basic/memory.h` uses `std::get_new_handler` without including `<new>` (transitive on mainstream stdlibs, missing in the p2996 fork's libc++ that compiles the generator). | A one-line `#include <new>` upstream in geogram. |
+| `mesh_ext.{h,cpp}` | Two output helpers, `triangles()` and `tex_coords()`: fan-triangulating polygonal facets on read-back is a *policy choice* no binding feature absorbs, and the UVs live in an `Attribute<double>` reached through the type-erased `get_doubles` (an out-parameter `GEO::vector<double>&`, which array marshalling cannot express). | Nothing mechanical — the fan policy stays wherever it is written; the attribute path would need `GEO::Attribute<T>` template-instantiation binding in rosetta. |
+| `algorithms.{h,cpp}` | Three things `^^name` splicing can't reach: `initialize()` (imports the CmdLine arg groups the algorithms read; `GEO::initialize` itself is idempotent upstream), the boolean helpers (`GEO::mesh_union` & co are overload sets), and the CSG entry points (`CSGCompiler::compile_*` returns `std::shared_ptr<Mesh>`). | Future rosetta features: a manifest `module_init` hook, overload selection by explicit signature, `shared_ptr` return support. Each deletes its piece. |
 | `geogram/version.h` | Artifact of the build strategy, not the binding: geogram's sources are compiled without running geogram's CMake, so the header its CMake would generate must exist somewhere. | Only a prebuilt `libgeogram` (`user_lib`) — which the wasm target can't use. |
 
 ## Prerequisites
@@ -113,7 +131,8 @@ python3 example_python_GUI.py
   **Remesh (CVT)** (`remesh_smooth`, with points / Lloyd / Newton controls)
   run on the `GEO::Mesh`; **Reset** restores the pristine model
   (`Mesh.copy`). The geometry crosses into pyvista as the same flat
-  `vertices()` / `triangles()` arrays the other viewers use.
+  `vertices.point_coordinates()` / `triangles()` arrays the other viewers
+  use.
 - Display toggles: plain shaded surface (PBR), **wireframe** overlay,
   vertex **points**, flat shading; the log panel prints per-operation
   timings. Native and multi-threaded: the default CVT remesh of the
@@ -132,8 +151,9 @@ python3 -m http.server        # then http://localhost:8000/
 
 - **Load** fetches `data/Intergalactic_Spaceship.obj`; the file picker
   accepts any local `.obj`. The OBJ is parsed in JS (fan-triangulated) and
-  pushed into the `GEO::Mesh` through `set_surface` — no filesystem in
-  wasm.
+  pushed into the `GEO::Mesh` through
+  `mesh.facets().assign_triangle_mesh(...)` + `mesh_repair` (adjacency) —
+  no filesystem in wasm.
 - Same algorithm buttons and display toggles as the desktop demo; **Reset**
   restores the pristine scan (`Mesh.copy`).
 
@@ -145,7 +165,8 @@ spaceship, repair takes ~0.3 s and the default remesh (10k points,
 ## Notes
 
 - **CSG dialect**: geogram evaluates the *compiled* OpenSCAD format (`openscad model.scad -o model.csg`). High-level transforms are OpenSCAD sugar — write `multmatrix([[1,0,0,tx],[0,1,0,ty],[0,0,1,tz],[0,0,0,1]]) { ... }` instead of `translate([tx,ty,tz])`.
-- `initialize(verbose)` runs lazily before any algorithm; call `initialize(true)` first to see geogram's logger (OpenNL solver output is routed through the logger too, so it honors the quiet flag).
-- In the WASM build, embind does not auto-convert JS arrays: use `Module.vector_double` / `Module.vector_int` and call `.delete()` on vectors and meshes (see `example_wasm.js`).
-- `mesh_union` / `mesh_intersection` / `mesh_difference` require closed surfaces without self-intersections (that is what the CSG primitives produce; use `mesh_repair` / `mesh_remove_intersections` on wild input).
-- This project is the test case for three rosetta features it motivated: by-reference unwrapping of bound classes in the node runtime, copyability gates in the emitters (skip what would not compile instead of failing the build), and manifest `extensions` (free functions as instance methods).
+- Call `initialize(verbose)` first (all the examples do): `mesh.load()`/`mesh.save()` are geogram's own methods and need the I/O handlers that `GEO::initialize` registers. The `georo::` algorithm helpers (booleans, CSG) still run it lazily as a fallback. `initialize(true)` enables geogram's logger (OpenNL solver output is routed through the logger too, so it honors the quiet flag).
+- Remeshing can leave higher-dimensional points (normals appended): call `mesh.vertices.set_dimension(3)` before reading `point_coordinates()` back (the examples do).
+- On **wasm**, `mesh.vertices()` / `mesh.facets()` are getter *methods* returning borrowed handles (embind properties copy) — don't `.delete()` them, and don't use them after the mesh is gone. embind does not auto-convert JS arrays: use `Module.vector_double` / `Module.vector_unsigned_int` (triangle indices are `index_t`) and call `.delete()` on vectors and meshes (see `example_wasm.js`).
+- `mesh_union` / `mesh_intersection` / `mesh_difference` require closed surfaces without self-intersections (that is what the CSG primitives produce; use `mesh_repair` / `mesh_remove_intersections` on wild input). `facets.assign_triangle_mesh` computes no adjacency — run `mesh_repair(M, MESH_REPAIR_DEFAULT, 0.0)` after it before the booleans/remeshing.
+- This project is the test case for the rosetta features it motivated: by-reference unwrapping of bound classes in the node runtime, copyability gates in the emitters (skip what would not compile instead of failing the build), manifest `extensions` (free functions as instance methods), member-object reference properties (+ the per-class `final` flag), and the `sequences` trait (`GEO::vector<T>` as flat arrays).
