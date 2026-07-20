@@ -2,7 +2,8 @@
     "//": "Rosetta binding manifest for the Geogram library.",
     "//paths": "All relative paths resolve from THIS file's directory (the project root).",
     "//design": "GEO::Mesh is bound DIRECTLY, and so are its member objects: mesh.vertices / mesh.facets / mesh.facet_corners are member-object reference properties (non-copyable stores holding a Mesh& back-reference; 'final': true suppresses their trampolines — MeshVertices/MeshFacets have public virtuals — which is also what lets node alias them). Geometry moves through geogram's own API: vertices.assign_points / facets.assign_triangle_mesh / vertices.point_coordinates, whose GEO::vector<T> parameters marshal as flat script arrays via the 'sequences' trait (their raw-pointer overloads are declared second, so the walk keeps the sequence one). Only TWO extension functions remain (src/mesh_ext.h): triangles() and tex_coords(), which encode the fan-triangulation-of-polygons output policy. load()/save() are Mesh members upstream (non-overloaded, PR #373) and bind natively, like copy/clear/show_stats. The GEO:: algorithms (remesh, repair, Co3Ne reconstruction, atlas, intersections) are bound straight from their headers; georo:: keeps only initialize(), the overloaded boolean helpers and the shared_ptr-returning CSG entry points (src/algorithms.h). NOTE: rosetta does not capture C++ default arguments — every parameter is explicit in the bindings.",
-    "//sources": "The geogram sources are compiled straight into every binding target (no prebuilt libgeogram: the wasm target needs the sources anyway, and a native lib built by another toolchain would risk an ABI mismatch). Globs are non-recursive, one per source dir. Optional parts guarded by GEOGRAM_WITH_TETGEN / _TRIANGLE / _LUA / _PDEL compile away. The vendored zlib/rply/libMeshb/OpenNL are C sources (the generated projects enable_language(C)).",
+    "//sources": "The geogram sources are compiled straight into every binding target (no prebuilt libgeogram: the wasm target needs the sources anyway, and a native lib built by another toolchain would risk an ABI mismatch). One glob per source dir, DELIBERATELY not the recursive ** — the set is selective: geogram/lua/, geogram/api/ and most of third_party/ (tetgen, triangle, PoissonRecon, stb, amgcl, lua) must stay out. The vendored zlib/rply/libMeshb/OpenNL are C sources (the generated projects enable_language(C)).",
+    "//defaults": "The top-level namespace default qualifies every unqualified class/function name with GEO:: (georo::* spellings pass verbatim). Groups ({\"header\": ..., \"entries\": [...]}) scope a shared header over a run of entries.",
     "//defines": "GEOGRAM_USE_BUILTIN_DEPS: mesh_io/geofile include the vendored libMeshb/rply/zlib instead of system libs. GEOGRAM_WITH_HLBFGS: compiles the HLBFGS optimizer in (required by the Newton iterations of CVT remeshing).",
     "//version-h": "src/geogram/version.h stands in for the header geogram's own CMake would generate; src/ is listed before extern/geogram/src/lib so it wins the include lookup.",
     "//link-options": "Under Node, geogram's GEO::initialize() mounts the host filesystem with NODEFS (EM_ASM in basic/common.cpp), so the wasm link needs emscripten's nodefs.js library — exactly what geogram's own cmake/platforms/Emscripten-clang.cmake adds.",
@@ -29,6 +30,7 @@
     "rosetta_include": "./extern/rosetta/include",
     "generator_name": "geogram",
     "module_name": "geogram",
+    "namespace": "GEO",
 
     "targets": [
         {"lang": "python-expanded", "name": "geogram"},
@@ -58,71 +60,58 @@
     ],
 
     "classes": [
-        {
-            "name": "GEO::Mesh",
-            "header": "geogram/mesh/mesh.h",
-            "doc": "geogram's mesh, bound directly. Geometry moves through the member-object properties (mesh.vertices, mesh.facets, mesh.facet_corners) as flat arrays: vertices.assign_points([x0,y0,z0,...], 3, false), facets.assign_triangle_mesh(3, coords, tris, false), vertices.point_coordinates(). load()/save() understand .obj, .off, .ply, .stl, .mesh/.meshb and .geogram; call initialize() before I/O.",
-            "extensions": [
-                {"name": "georo::triangles", "header": "mesh_ext.h",
-                 "doc": "Triangle vertex indices, 3 per triangle (polygonal facets are fan-triangulated; a triangulated mesh is a bulk copy of facet_corners.vertex_indices())."},
-                {"name": "georo::tex_coords", "header": "mesh_ext.h",
-                 "doc": "UVs from mesh_make_atlas as a flat [u,v] array, one entry per triangle corner (aligned with triangles())."}
-            ]
-        },
-        {"name": "GEO::MeshVertices", "header": "geogram/mesh/mesh.h", "final": true,
-         "doc": "The vertices of a Mesh, reached as the mesh.vertices member-object property: nb(), create_vertices(n), assign_points(coords, 3, false) with coords a flat [x0,y0,z0,...] array, point_coordinates() to read them back (set_dimension(3) first if the mesh may be higher-dimensional, e.g. after remesh_smooth)."},
-        {"name": "GEO::MeshFacets", "header": "geogram/mesh/mesh.h", "final": true,
-         "doc": "The facets of a Mesh, reached as the mesh.facets member-object property: nb(), nb_vertices(f), vertex(f,lv), assign_triangle_mesh(3, coords, triangles, false) with flat arrays. assign_triangle_mesh does not compute adjacency; run mesh_repair(M, MESH_REPAIR_DEFAULT, 0.0) after when the booleans/remeshing need connected facets."},
-        {"name": "GEO::MeshFacetCornersStore", "header": "geogram/mesh/mesh.h",
-         "doc": "The facet corners of a Mesh, reached as the mesh.facet_corners member-object property: nb(), vertex(c), set_vertex(c,v), adjacent_facet(c)."},
-        {"name": "GEO::MeshElementsFlags", "header": "geogram/mesh/mesh.h",
-         "doc": "Element selector for Mesh.copy (MESH_VERTICES | MESH_FACETS | ... | MESH_ALL_ELEMENTS)."},
-        {"name": "GEO::MeshRepairMode", "header": "geogram/mesh/mesh_repair.h",
-         "doc": "Mode flags for mesh_repair (MESH_REPAIR_DEFAULT, ...)."},
-        {"name": "GEO::ChartParameterizer", "header": "geogram/parameterization/mesh_atlas_maker.h",
-         "doc": "Per-chart flattening algorithm for mesh_make_atlas (PARAM_PROJECTION, PARAM_LSCM, PARAM_SPECTRAL_LSCM, PARAM_ABF)."},
-        {"name": "GEO::ChartPacker", "header": "geogram/parameterization/mesh_atlas_maker.h",
-         "doc": "Texture-space packer for mesh_make_atlas (PACK_NONE, PACK_TETRIS, PACK_XATLAS)."}
+        {"//": "--- the mesh and its member-object stores ---", "header": "geogram/mesh/mesh.h", "entries": [
+            {"name": "Mesh", "extensions": [
+                {"name": "georo::triangles",  "header": "mesh_ext.h"},
+                {"name": "georo::tex_coords", "header": "mesh_ext.h"}
+            ]},
+            {"name": "MeshVertices", "final": true},
+            {"name": "MeshFacets",   "final": true},
+            {"name": "MeshFacetCornersStore"},
+            {"name": "MeshElementsFlags"}
+        ]},
+        {"name": "MeshRepairMode", "header": "geogram/mesh/mesh_repair.h"},
+        {"//": "--- atlas ---", "header": "geogram/parameterization/mesh_atlas_maker.h", "entries": [
+            {"name": "ChartParameterizer"},
+            {"name": "ChartPacker"}
+        ]}
     ],
 
     "functions": [
-        {"header": "algorithms.h", "name": "georo::initialize",
-         "doc": "Initialize geogram + CmdLine arg groups. Call it first; verbose=true enables geogram's logger."},
+        {"header": "algorithms.h", "name": "georo::initialize"},
 
-        {"header": "geogram/points/co3ne.h", "name": "GEO::Co3Ne_smooth",
-         "doc": "Smooth a point cloud by projection on the best approximating plane of the k nearest neighbors (Co3Ne)."},
-        {"header": "geogram/points/co3ne.h", "name": "GEO::Co3Ne_smooth_and_reconstruct",
-         "doc": "Smooth a point cloud and reconstruct a triangulated surface (Co3Ne). radius is the maximum distance used to connect neighbors with triangles."},
+        {"//": "--- point clouds ---", "header": "geogram/points/co3ne.h", "entries": [
+            {"name": "Co3Ne_smooth"},
+            {"name": "Co3Ne_smooth_and_reconstruct"}
+        ]},
 
-        {"header": "geogram/mesh/mesh_remesh.h", "name": "GEO::remesh_smooth",
-         "doc": "Isotropic remeshing by Centroidal Voronoi Tesselation: (M_in, M_out, nb_points, dim=0, nb_Lloyd_iter, nb_Newton_iter, Newton_m, adjust, adjust_max_edge_distance, adjust_border_importance)."},
+        {"header": "geogram/mesh/mesh_remesh.h", "name": "remesh_smooth"},
+        {"header": "geogram/mesh/mesh_repair.h", "name": "mesh_repair"},
 
-        {"header": "geogram/mesh/mesh_repair.h", "name": "GEO::mesh_repair",
-         "doc": "Glue colocated vertices, remove degenerate/duplicate facets, connect and reorient facets: (M, MeshRepairMode, colocate_epsilon)."},
-        {"header": "geogram/mesh/mesh_fill_holes.h", "name": "GEO::fill_holes",
-         "doc": "Fill holes smaller than max_area with fewer than max_edges border edges: (M, max_area, max_edges, repair)."},
-        {"header": "geogram/mesh/mesh_fill_holes.h", "name": "GEO::tessellate_facets",
-         "doc": "Subdivide facets with more than max_nb_vertices vertices (3 triangulates the mesh)."},
+        {"//": "--- holes ---", "header": "geogram/mesh/mesh_fill_holes.h", "entries": [
+            {"name": "fill_holes"},
+            {"name": "tessellate_facets"}
+        ]},
 
-        {"header": "geogram/parameterization/mesh_atlas_maker.h", "name": "GEO::mesh_make_atlas",
-         "doc": "Segment into charts, flatten and pack in texture space: (M, hard_angles_threshold_degrees, ChartParameterizer, ChartPacker, verbose); read the UVs back with Mesh.tex_coords()."},
-        {"header": "geogram/parameterization/mesh_atlas_maker.h", "name": "GEO::mesh_get_charts",
-         "doc": "Number of charts of a parameterized mesh."},
+        {"//": "--- atlas ---", "header": "geogram/parameterization/mesh_atlas_maker.h", "entries": [
+            {"name": "mesh_make_atlas"},
+            {"name": "mesh_get_charts"}
+        ]},
 
-        {"header": "algorithms.h", "name": "georo::mesh_union",
-         "doc": "Boolean union of two closed surface meshes (GEO::mesh_union is overloaded, hence the georo wrapper)."},
-        {"header": "algorithms.h", "name": "georo::mesh_intersection",
-         "doc": "Boolean intersection of two closed surface meshes."},
-        {"header": "algorithms.h", "name": "georo::mesh_difference",
-         "doc": "Boolean difference of two closed surface meshes."},
-        {"header": "geogram/mesh/mesh_surface_intersection.h", "name": "GEO::mesh_remove_intersections",
-         "doc": "Resolve the self-intersections of a surface mesh: (M, max_iter, verbose)."},
-        {"header": "geogram/mesh/mesh_surface_intersection.h", "name": "GEO::mesh_facets_have_intersection",
-         "doc": "Test whether two facets of a mesh intersect."},
+        {"//": "--- booleans (georo glue: GEO::mesh_union et al. are overloaded) ---", "header": "algorithms.h", "entries": [
+            {"name": "georo::mesh_union"},
+            {"name": "georo::mesh_intersection"},
+            {"name": "georo::mesh_difference"}
+        ]},
 
-        {"header": "algorithms.h", "name": "georo::csg_evaluate_string",
-         "doc": "Evaluate an OpenSCAD-style .csg program from a string (sphere, cube, cylinder, union, difference, intersection, multmatrix, ...)."},
-        {"header": "algorithms.h", "name": "georo::csg_evaluate_file",
-         "doc": "Evaluate an OpenSCAD-style .csg / .scad file."}
+        {"//": "--- self-intersections ---", "header": "geogram/mesh/mesh_surface_intersection.h", "entries": [
+            {"name": "mesh_remove_intersections"},
+            {"name": "mesh_facets_have_intersection"}
+        ]},
+
+        {"//": "--- CSG ---", "header": "algorithms.h", "entries": [
+            {"name": "georo::csg_evaluate_string"},
+            {"name": "georo::csg_evaluate_file"}
+        ]}
     ]
 }
