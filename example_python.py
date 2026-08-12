@@ -10,37 +10,49 @@ import sys
 sys.path.insert(0, "bindings/python-expanded")
 import geogram as geo
 
-geo.initialize(False)  # True for geogram's log output
+# No initialize() call: geogram's lifecycle (GEO::initialize, the CmdLine
+# argument groups, the OpenNL log routing) runs when the module loads, from
+# the manifest's "module_init". The log starts off — turn it on with:
+#     geo.Logger.instance().set_quiet(False)
 
 # ---------------------------------------------------------------- CSG ---
+# GEO::CSGCompiler is bound directly: compile_string / compile_file return the
+# mesh they built (a std::shared_ptr<Mesh> on the C++ side — the object stays
+# alive for as long as this handle does), and compile_file takes its path as a
+# plain string.
+#
+# A compiler instance is SINGLE-USE: geogram keeps parser/builder state, so a
+# second compile on the same object comes back empty. One CSGCompiler per
+# program — they are cheap.
+def csg_eval(program):
+    compiler = geo.CSGCompiler()
+    compiler.set_verbose(False)  # True for the CSG tree and its timings
+    return compiler.compile_string(program)
+
+
 # Evaluate an OpenSCAD-style program: a sphere minus a cylinder.
-csg = geo.Mesh()
-ok = geo.csg_evaluate_string(
+csg = csg_eval(
     """
     difference() {
         sphere(r = 10.0);
         cylinder(h = 30.0, r1 = 4.0, r2 = 4.0, center = true);
     }
-    """,
-    csg,
-    False,
+    """
 )
-assert ok, "CSG evaluation failed"
 print(f"CSG        : sphere minus cylinder -> "
       f"{csg.vertices.nb()} vertices, {csg.facets.nb()} facets")
 csg.save("out_csg.obj")
 
 # ----------------------------------------------------- Boolean operations ---
-# Two overlapping spheres, this time through the mesh_* boolean API.
-a, b = geo.Mesh(), geo.Mesh()
-geo.csg_evaluate_string("sphere(r = 10.0);", a, False)
+# Two overlapping spheres, this time through the mesh_* boolean API. geogram
+# declares each of these twice (a flags variant and this bool-verbose one); the
+# manifest picks this one by signature.
+a = csg_eval("sphere(r = 10.0);")
 # geogram evaluates the *compiled* OpenSCAD format (.csg), where high-level
 # transforms are lowered to multmatrix.
-geo.csg_evaluate_string(
+b = csg_eval(
     "multmatrix([[1,0,0,6],[0,1,0,0],[0,0,1,0],[0,0,0,1]]) "
-    "{ sphere(r = 10.0); }",
-    b,
-    False,
+    "{ sphere(r = 10.0); }"
 )
 
 union = geo.Mesh()
@@ -70,8 +82,15 @@ remeshed.save("out_remeshed.obj")
 # read the texture coordinates back (6 values per triangle).
 geo.mesh_make_atlas(remeshed, 45.0, geo.ChartParameterizer.PARAM_LSCM,
                     geo.ChartPacker.PACK_XATLAS, False)
-uv = remeshed.tex_coords()
-tri = remeshed.triangles()
+# Geometry and UVs both come out of geogram's own API. triangulate() is a no-op
+# on an already-triangulated mesh and fan-triangulates polygons otherwise, so
+# the corner arrays below line up three-per-triangle.
+remeshed.facets.triangulate()
+tri = remeshed.facet_corners.vertex_indices()
+# get_doubles writes through two references in C++; the manifest declares them
+# out-parameters, so Python gets them back as a tuple.
+ok, uv, dim = remeshed.facet_corners.attributes().get_doubles("tex_coord")
+assert ok and dim == 2, "the atlas writes a 2-D tex_coord corner attribute"
 assert len(uv) == 2 * len(tri), "one (u,v) per triangle corner"
 print(f"texturing  : {geo.mesh_get_charts(remeshed)} charts, "
       f"{len(uv) // 2} UV corners in "

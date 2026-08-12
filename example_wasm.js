@@ -34,30 +34,41 @@ function fromVector(v) {
 }
 
 createModule().then((Module) => {
-    Module.initialize(false); // true for geogram's log output
+    // No initialize() call: geogram's lifecycle runs when the module loads,
+    // from the manifest's "module_init". The log starts off — turn it on
+    // with Module.Logger.instance().set_quiet(false).
 
     // -------------------------------------------------------------- CSG ---
-    const csg = new Module.Mesh();
-    const ok = Module.csg_evaluate_string(
+    // GEO::CSGCompiler is bound directly: compile_string / compile_file return
+    // the mesh they built (a std::shared_ptr<Mesh> on the C++ side, which
+    // embind hands over as a Mesh handle), and compile_file takes its path as a
+    // plain string.
+    //
+    // A compiler instance is SINGLE-USE: geogram keeps parser/builder state, so
+    // a second compile on the same object comes back empty. One CSGCompiler per
+    // program — they are cheap.
+    const csgEval = (program) => {
+        const compiler = new Module.CSGCompiler();
+        compiler.set_verbose(false); // true for the CSG tree and its timings
+        const m = compiler.compile_string(program);
+        compiler.delete();           // embind handles are freed explicitly
+        return m;
+    };
+
+    const csg = csgEval(
         `difference() {
              sphere(r = 10.0);
              cylinder(h = 30.0, r1 = 4.0, r2 = 4.0, center = true);
-         }`,
-        csg,
-        false
+         }`
     );
-    console.assert(ok, "CSG evaluation failed");
     console.log(`CSG        : sphere minus cylinder -> ` +
                 `${csg.vertices().nb()} vertices, ${csg.facets().nb()} facets`);
 
     // --------------------------------------------------- Boolean operations ---
-    const a = new Module.Mesh();
-    const b = new Module.Mesh();
-    Module.csg_evaluate_string("sphere(r = 10.0);", a, false);
-    Module.csg_evaluate_string(
+    const a = csgEval("sphere(r = 10.0);");
+    const b = csgEval(
         "multmatrix([[1,0,0,6],[0,1,0,0],[0,0,1,0],[0,0,0,1]]) " +
-        "{ sphere(r = 10.0); }",
-        b, false
+        "{ sphere(r = 10.0); }"
     );
 
     const union = new Module.Mesh();
@@ -81,7 +92,14 @@ createModule().then((Module) => {
     Module.mesh_make_atlas(remeshed, 45.0,
         Module.ChartParameterizer.PARAM_LSCM,
         Module.ChartPacker.PACK_XATLAS, false);
-    const uv = fromVector(remeshed.tex_coords());
+    // get_doubles writes through two references in C++, which the manifest
+    // declares out-parameters; embind has no tuple, so they come back as a
+    // plain array: [ok, values, dim]. `values` is a vector_double handle.
+    remeshed.facets().triangulate();
+    const [uvOk, uvVec, uvDim] = remeshed.facet_corners().attributes().get_doubles("tex_coord");
+    console.assert(uvOk && uvDim === 2, "the atlas writes a 2-D tex_coord corner attribute");
+    const uv = fromVector(uvVec);
+    uvVec.delete();
     console.log(`texturing  : ${Module.mesh_get_charts(remeshed)} charts, ` +
                 `${uv.length / 2} UV corners in ` +
                 `[${Math.min(...uv).toFixed(3)}, ` +

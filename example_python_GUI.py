@@ -26,12 +26,19 @@ from pathlib import Path
 import numpy as np
 import pyvista as pv
 from pyvistaqt import QtInteractor
-from qtpy import QtCore, QtWidgets
+from qtpy import QtCore, QtGui, QtWidgets
 
 sys.path.insert(0, str(Path(__file__).parent / "bindings" / "python-expanded"))
 import geogram as geo
 
 DATA = Path(__file__).parent / "data" / "Intergalactic_Spaceship.obj"
+
+# Colour tables offered for the height ramp. Any matplotlib colormap name works
+# (pyvista resolves it), so this is a shortlist, not a limit: the perceptually
+# uniform ones first, then the diverging and the classics.
+CMAPS = ["viridis", "plasma", "inferno", "magma", "cividis",
+         "coolwarm", "turbo", "jet", "terrain", "gray"]
+DEFAULT_COLOR = "#b8894a"
 
 
 def to_polydata(mesh: "geo.Mesh") -> pv.PolyData:
@@ -41,7 +48,8 @@ def to_polydata(mesh: "geo.Mesh") -> pv.PolyData:
     if mesh.vertices.dimension() > 3:
         mesh.vertices.set_dimension(3)
     verts = np.asarray(mesh.vertices.point_coordinates()).reshape(-1, 3)
-    tris = np.asarray(mesh.triangles(), dtype=np.int64).reshape(-1, 3)
+    mesh.facets.triangulate()  # no-op when the mesh is already triangles
+    tris = np.asarray(mesh.facet_corners.vertex_indices(), dtype=np.int64).reshape(-1, 3)
     faces = np.hstack([np.full((len(tris), 1), 3, dtype=np.int64), tris])
     return pv.PolyData(verts, faces.ravel())
 
@@ -92,6 +100,20 @@ class Viewer(QtWidgets.QMainWindow):
         row(QtWidgets.QLabel("Lloyd"), self.n_lloyd,
             QtWidgets.QLabel("Newton"), self.n_newton)
 
+        # Colouring: a solid colour, or the Z coordinate through a colour table.
+        self.color = DEFAULT_COLOR
+        self.b_color = QtWidgets.QPushButton("Object colour…")
+        self.m_color = QtWidgets.QComboBox()
+        self.m_color.addItems(["Solid colour", "Height (Z)"])
+        row(self.b_color, self.m_color)
+        self.cmap = QtWidgets.QComboBox()
+        self.cmap.addItems(CMAPS)
+        self.c_bar = QtWidgets.QCheckBox("legend")
+        self.c_bar.setChecked(True)
+        row(QtWidgets.QLabel("colour table"), self.cmap, self.c_bar)
+        self._paint_color_button()
+        self._sync_color_controls()
+
         self.c_wire = QtWidgets.QCheckBox("wireframe")
         self.c_points = QtWidgets.QCheckBox("points")
         self.c_flat = QtWidgets.QCheckBox("flat shading")
@@ -129,12 +151,53 @@ class Viewer(QtWidgets.QMainWindow):
             "reset to original", lambda: self.mesh.copy(
                 self.original, True, geo.MeshElementsFlags.MESH_ALL_ELEMENTS)))
         self.b_fit.clicked.connect(self.plotter.reset_camera)
-        for c in (self.c_wire, self.c_points, self.c_flat):
+        for c in (self.c_wire, self.c_points, self.c_flat, self.c_bar):
             c.toggled.connect(lambda _=False: self.refresh())
+        self.b_color.clicked.connect(self.pick_color)
+        self.m_color.currentIndexChanged.connect(self.color_mode_changed)
+        self.cmap.currentIndexChanged.connect(lambda _=0: self.refresh())
 
+        # No initialize() call: geogram's lifecycle (GEO::initialize, the
+        # CmdLine argument groups, the OpenNL log routing) runs when the module
+        # loads, from the manifest's "module_init" — including the I/O handlers
+        # the Open… button needs. The log starts off.
         self.log("module loaded — click “Load” (or “Open…” for any mesh "
                  "geogram reads: .obj, .off, .ply, .stl, .mesh, .geogram).")
-        geo.initialize(False)  # True for geogram's log output on stdout
+
+    # ------------------------------------------------------------- colour
+    def _paint_color_button(self) -> None:
+        """Show the current colour on the button itself — a swatch, not a word."""
+        c = QtGui.QColor(self.color)
+        # Readable label whatever the swatch: dark text on a light colour.
+        fg = "#000000" if c.lightnessF() > 0.55 else "#ffffff"
+        self.b_color.setStyleSheet(
+            f"background-color: {self.color}; color: {fg}; padding: 4px;")
+
+    def _sync_color_controls(self) -> None:
+        by_z = self.m_color.currentIndex() == 1
+        self.b_color.setEnabled(not by_z)
+        self.cmap.setEnabled(by_z)
+        self.c_bar.setEnabled(by_z)
+
+    def pick_color(self) -> None:
+        c = QtWidgets.QColorDialog.getColor(
+            QtGui.QColor(self.color), self, "Object colour")
+        if not c.isValid():
+            return
+        self.color = c.name()
+        self._paint_color_button()
+        self.refresh()
+
+    def color_mode_changed(self, _index: int = 0) -> None:
+        self._sync_color_controls()
+        self.refresh()
+
+    def _drop_scalar_bar(self) -> None:
+        """Remove the height legend if one is up (no-op otherwise)."""
+        try:
+            self.plotter.remove_scalar_bar("Z")
+        except Exception:
+            pass  # none present — pyvista raises rather than shrugging
 
     # ------------------------------------------------------------ helpers
     def log(self, msg: str) -> None:
@@ -203,14 +266,30 @@ class Viewer(QtWidgets.QMainWindow):
         if not self.loaded:
             return
         poly = to_polydata(self.mesh)
+        shared = dict(name="surface", metallic=0.35, roughness=0.5, pbr=True,
+                      smooth_shading=not self.c_flat.isChecked())
         # name= replaces the previous actor of the same name in pyvista.
-        self.plotter.add_mesh(
-            poly, name="surface", color="#b8894a", metallic=0.35,
-            roughness=0.5, pbr=True,
-            smooth_shading=not self.c_flat.isChecked())
+        if self.m_color.currentIndex() == 1:
+            # Height ramp: the Z coordinate as a point scalar, mapped through
+            # the chosen colour table. Recomputed every redraw, so the range
+            # follows the mesh through a remesh or a reload.
+            poly["Z"] = poly.points[:, 2]
+            self.plotter.add_mesh(
+                poly, scalars="Z", cmap=self.cmap.currentText(),
+                show_scalar_bar=self.c_bar.isChecked(),
+                scalar_bar_args=dict(title="Z", color="#dddddd",
+                                     n_labels=5, fmt="%.3g"),
+                **shared)
+            if not self.c_bar.isChecked():
+                self._drop_scalar_bar()
+        else:
+            self._drop_scalar_bar()
+            self.plotter.add_mesh(poly, color=self.color, **shared)
+        # The overlays keep their own colours: scalars=None so the height ramp
+        # does not repaint the wireframe and the point cloud too.
         wire = self.plotter.add_mesh(
             poly, name="wire", style="wireframe", color="#dddddd",
-            opacity=0.35, line_width=2)
+            scalars=None, opacity=0.35, line_width=2)
         pts = self.plotter.add_mesh(
             poly.points, name="cloud", color="#7fd0ff", point_size=3,
             render_points_as_spheres=False)

@@ -20,19 +20,32 @@ const geo = require(path.join(
     __dirname, "bindings", "node-expanded", "build", "Release", "geogram.node"
 ));
 
-geo.initialize(false); // true for geogram's log output
+// No initialize() call: geogram's lifecycle (GEO::initialize, the CmdLine
+// argument groups, the OpenNL log routing) runs when the module loads, from
+// the manifest's "module_init". The log starts off — turn it on with:
+//     geo.Logger.instance().set_quiet(false);
 
 // ---------------------------------------------------------------- CSG ---
-const csg = new geo.Mesh();
-const ok = geo.csg_evaluate_string(
+// GEO::CSGCompiler is bound directly: compile_string / compile_file return the
+// mesh they built (a std::shared_ptr<Mesh> on the C++ side — this JS handle
+// adopts it and keeps the object alive), and compile_file takes its path as a
+// plain string.
+//
+// A compiler instance is SINGLE-USE: geogram keeps parser/builder state, so a
+// second compile on the same object comes back empty. One CSGCompiler per
+// program — they are cheap.
+function csgEval(program) {
+    const compiler = new geo.CSGCompiler();
+    compiler.set_verbose(false); // true for the CSG tree and its timings
+    return compiler.compile_string(program);
+}
+
+const csg = csgEval(
     `difference() {
          sphere(r = 10.0);
          cylinder(h = 30.0, r1 = 4.0, r2 = 4.0, center = true);
-     }`,
-    csg,
-    false
+     }`
 );
-console.assert(ok, "CSG evaluation failed");
 console.log(`CSG        : sphere minus cylinder -> ` +
             `${csg.vertices.nb()} vertices, ${csg.facets.nb()} facets`);
 csg.save("out_csg_node.obj");
@@ -40,12 +53,9 @@ csg.save("out_csg_node.obj");
 // ----------------------------------------------------- Boolean operations ---
 // geogram evaluates the *compiled* OpenSCAD format (.csg): high-level
 // transforms are written as multmatrix.
-const a = new geo.Mesh();
-const b = new geo.Mesh();
-geo.csg_evaluate_string("sphere(r = 10.0);", a, false);
-geo.csg_evaluate_string(
-    "multmatrix([[1,0,0,6],[0,1,0,0],[0,0,1,0],[0,0,0,1]]) { sphere(r = 10.0); }",
-    b, false
+const a = csgEval("sphere(r = 10.0);");
+const b = csgEval(
+    "multmatrix([[1,0,0,6],[0,1,0,0],[0,0,1,0],[0,0,0,1]]) { sphere(r = 10.0); }"
 );
 
 const union = new geo.Mesh();
@@ -70,8 +80,13 @@ console.log(`remeshing  : union remeshed to ${remeshed.vertices.nb()} ` +
 // ------------------------------------- Parameterization and texturing ---
 geo.mesh_make_atlas(remeshed, 45.0, geo.ChartParameterizer.PARAM_LSCM,
                     geo.ChartPacker.PACK_XATLAS, false);
-const uv = remeshed.tex_coords();
-const tri = remeshed.triangles();
+// Geometry and UVs both come out of geogram's own API; get_doubles writes
+// through two references in C++, which the manifest declares out-parameters, so
+// JS receives them as array elements.
+remeshed.facets.triangulate();
+const tri = remeshed.facet_corners.vertex_indices();
+const [ok, uv, dim] = remeshed.facet_corners.attributes().get_doubles("tex_coord");
+console.assert(ok && dim === 2, "the atlas writes a 2-D tex_coord corner attribute");
 console.assert(uv.length === 2 * tri.length, "one (u,v) per corner");
 console.log(`texturing  : ${geo.mesh_get_charts(remeshed)} charts, ` +
             `${uv.length / 2} UV corners in ` +

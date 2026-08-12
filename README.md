@@ -23,9 +23,9 @@ Language bindings for [Geogram](https://github.com/BrunoLevy/geogram) (a program
 |---|---|
 | Surface reconstruction | `Co3Ne_smooth`, `Co3Ne_smooth_and_reconstruct` (Co3Ne: smoothing + co-cone triangulation of a point cloud) |
 | Remeshing | `remesh_smooth` (isotropic CVT remeshing, Lloyd + Newton), `mesh_repair`, `fill_holes`, `tessellate_facets` |
-| Parameterization & texturing | `mesh_make_atlas` (charts + LSCM/ABF/spectral/projection + tetris/xatlas packing), `mesh_get_charts`, `Mesh.tex_coords()` |
+| Parameterization & texturing | `mesh_make_atlas` (charts + LSCM/ABF/spectral/projection + tetris/xatlas packing), `mesh_get_charts`, and the UVs through `mesh.facet_corners.attributes().get_doubles("tex_coord")` |
 | Intersections & Booleans | `mesh_union`, `mesh_intersection`, `mesh_difference`, `mesh_remove_intersections`, `mesh_facets_have_intersection` (exact arithmetic) |
-| CSG | `csg_evaluate_string`, `csg_evaluate_file` (OpenSCAD `.csg` programs: `sphere`, `cube`, `cylinder`, `union`, `difference`, `intersection`, `multmatrix`, `hull`, `minkowski`, `linear_extrude`, ...) |
+| CSG | `CSGCompiler` — `compile_string`, `compile_file` (OpenSCAD `.csg` programs: `sphere`, `cube`, `cylinder`, `union`, `difference`, `intersection`, `multmatrix`, `hull`, `minkowski`, `linear_extrude`, ...); geogram's own class, bound directly |
 
 plus the enums `MeshElementsFlags`, `MeshRepairMode`, `ChartParameterizer`, `ChartPacker`, `GEO::Mesh`'s own marshalable methods (`load`, `save`, `copy`, `clear`, `show_stats`, `get_attributes`, ...) and its **member objects** `mesh.vertices` / `mesh.facets` / `mesh.facet_corners` — reference properties over the real stores, through which geometry moves as flat arrays via geogram's own API:
 
@@ -38,7 +38,7 @@ coords = m.vertices.point_coordinates()                 # flat [x,y,z,...] back
 
 (`GEO::vector<T>` parameters and returns marshal as plain script arrays through rosetta's `sequences` trait.)
 
-## Why is there still a `src/` folder?
+## How the `src/` folder disappeared
 
 "No facade" removed the wrapper *class* — scripts hold the real `GEO::Mesh`
 and the algorithms are bound from geogram's own headers — not the last mile
@@ -53,13 +53,27 @@ flag suppresses their trampolines so node reaches them too), the
 because the adapters call by name, the first-declared overloads
 `assign_points` / `assign_triangle_mesh` bind), which together deleted
 `set_points` / `set_surface` / `vertices` / `nb_vertices` / `nb_facets` from
-`mesh_ext`. What remains has a specific, known cause:
+`mesh_ext`. A third round then emptied `algorithms.{h,cpp}` and deleted it:
+**overload selection by signature** (a manifest `"signature"` picks one member
+of an overload set, so `GEO::mesh_union` & co bind straight from geogram's
+header), **`std::filesystem::path` + `std::shared_ptr` support on every target**
+(so `GEO::CSGCompiler` — whose `compile_file` takes a path and whose
+`compile_*` return `shared_ptr<Mesh>` — binds as a class), and **`module_init`**
+(geogram's lifecycle runs when the module loads, so no `initialize()` wrapper is
+needed). A fourth field, **`generated_headers`**, replaced the checked-in
+`geogram/version.h` stand-in with geogram's own `version.h.in`, configured by
+rosetta into the generated tree.
 
-| File | Why it exists | What would remove it |
-|---|---|---|
-| `mesh_ext.{h,cpp}` | Two output helpers, `triangles()` and `tex_coords()`: fan-triangulating polygonal facets on read-back is a *policy choice* no binding feature absorbs, and the UVs live in an `Attribute<double>` reached through the type-erased `get_doubles` (an out-parameter `GEO::vector<double>&`, which array marshalling cannot express). | Nothing mechanical — the fan policy stays wherever it is written; the attribute path would need `GEO::Attribute<T>` template-instantiation binding in rosetta. |
-| `algorithms.{h,cpp}` | Three things `^^name` splicing can't reach: `initialize()` (imports the CmdLine arg groups the algorithms read; `GEO::initialize` itself is idempotent upstream), the boolean helpers (`GEO::mesh_union` & co are overload sets), and the CSG entry points (`CSGCompiler::compile_*` returns `std::shared_ptr<Mesh>`). | Future rosetta features: a manifest `module_init` hook, overload selection by explicit signature, `shared_ptr` return support. Each deletes its piece. |
-| `geogram/version.h` | Artifact of the build strategy, not the binding: geogram's sources are compiled without running geogram's CMake, so the header its CMake would generate must exist somewhere. | Only a prebuilt `libgeogram` (`user_lib`) — which the wasm target can't use. |
+A fifth field, **`out_params`**, then removed the last two helpers and with them
+`src/` itself: `triangles()` is `mesh.facets.triangulate()` (geogram
+fan-triangulates identically) followed by `mesh.facet_corners.vertex_indices()`,
+and `tex_coords()` is
+`mesh.facet_corners.attributes().get_doubles("tex_coord")`, whose two
+written-through references the manifest declares as outputs — so scripts get
+`(ok, values, dim)` back.
+
+**There is no `src/` any more.** The binding is geogram's own API, end to end:
+no wrapper class, no glue header, nothing to keep in sync.
 
 ## Prerequisites
 
@@ -72,35 +86,16 @@ because the adapters call by name, the first-declared overloads
 
 ## Build
 
+One-time bootstrap: fetch `rosetta` into `extern/` and build `rosetta_gen`:
+
 ```bash
-# 0. One-time bootstrap: fetch geogram + rosetta into extern/, build rosetta_gen
 cmake -B build && cmake --build build
+```
 
-# 1. Generate the generator project from manifest.json, then build it
-./extern/rosetta/bin/rosetta_gen manifest.json gen
-cmake -S gen -B gen/build && cmake --build gen/build
+Then, generate the `generator` + all the bindings and compile all of them:
 
-# 2. Generate all binding projects (bindings/…)
-./generator bindings
-
-# 3. Python
-cmake -S bindings/python-expanded -B bindings/python-expanded/build
-cmake --build bindings/python-expanded/build -j
-python3 example_python.py
-python3 example_python_GUI.py   # desktop viewer (needs pyvista + pyvistaqt)
-
-# 4. Node.js
-(cd bindings/node-expanded && npm i && npm run build)
-node example_node.js
-
-# 5. WebAssembly
-source ~/emsdk/emsdk_env.sh
-emcmake cmake -S bindings/wasm-expanded -B bindings/wasm-expanded/build
-cmake --build bindings/wasm-expanded/build -j
-node example_wasm.js
-
-# 6. TypeScript declarations (no build needed)
-cat bindings/typescript/geogram.d.ts
+```bash
+./extern/rosetta/bin/rosetta_gen --build manifest.json
 ```
 
 All three examples run the same pipeline — CSG (sphere minus cylinder), the three boolean operations on two overlapping spheres, CVT remeshing of the union to 5000 vertices, LSCM/xatlas UV-atlas generation with UV read-back, then Co3Ne reconstruction of the surface from its bare point cloud — and print the same counts:
@@ -165,8 +160,9 @@ spaceship, repair takes ~0.3 s and the default remesh (10k points,
 ## Notes
 
 - **CSG dialect**: geogram evaluates the *compiled* OpenSCAD format (`openscad model.scad -o model.csg`). High-level transforms are OpenSCAD sugar — write `multmatrix([[1,0,0,tx],[0,1,0,ty],[0,0,1,tz],[0,0,0,1]]) { ... }` instead of `translate([tx,ty,tz])`.
-- Call `initialize(verbose)` first (all the examples do): `mesh.load()`/`mesh.save()` are geogram's own methods and need the I/O handlers that `GEO::initialize` registers. The `georo::` algorithm helpers (booleans, CSG) still run it lazily as a fallback. `initialize(true)` enables geogram's logger (OpenNL solver output is routed through the logger too, so it honors the quiet flag).
+- **There is no `initialize()` call any more.** geogram's lifecycle — `GEO::initialize` (which registers the I/O handlers `mesh.load()` / `mesh.save()` need), the seven `CmdLine::import_arg_group` calls the algorithms read their tuning parameters from, and the OpenNL log routing — runs when the module loads, from the manifest's `module_init`. geogram's log starts **quiet**; to get it back, flip the `set_quiet(true)` statement in `module_init` and regenerate. It cannot be a runtime switch today: `GEO::Logger` derives from `Counted` and protects its destructor, which no backend can wrap (rosetta now skips such a class with a note instead of failing the build).
+- A **`CSGCompiler` instance is single-use**: geogram keeps parser/builder state, so a second `compile_string` / `compile_file` on the same object comes back empty. Construct one per program (they are cheap) — the examples wrap that in a three-line `csg_eval` helper.
 - Remeshing can leave higher-dimensional points (normals appended): call `mesh.vertices.set_dimension(3)` before reading `point_coordinates()` back (the examples do).
 - On **wasm**, `mesh.vertices()` / `mesh.facets()` are getter *methods* returning borrowed handles (embind properties copy) — don't `.delete()` them, and don't use them after the mesh is gone. embind does not auto-convert JS arrays: use `Module.vector_double` / `Module.vector_unsigned_int` (triangle indices are `index_t`) and call `.delete()` on vectors and meshes (see `example_wasm.js`).
 - `mesh_union` / `mesh_intersection` / `mesh_difference` require closed surfaces without self-intersections (that is what the CSG primitives produce; use `mesh_repair` / `mesh_remove_intersections` on wild input). `facets.assign_triangle_mesh` computes no adjacency — run `mesh_repair(M, MESH_REPAIR_DEFAULT, 0.0)` after it before the booleans/remeshing.
-- This project is the test case for the rosetta features it motivated: by-reference unwrapping of bound classes in the node runtime, copyability gates in the emitters (skip what would not compile instead of failing the build), manifest `extensions` (free functions as instance methods), member-object reference properties (+ the per-class `final` flag), and the `sequences` trait (`GEO::vector<T>` as flat arrays).
+- This project is the test case for the rosetta features it motivated: by-reference unwrapping of bound classes in the node runtime, copyability gates in the emitters (skip what would not compile instead of failing the build), manifest `extensions` (free functions as instance methods), member-object reference properties (+ the per-class `final` flag), the `sequences` trait (`GEO::vector<T>` as flat arrays), free-function overload selection by explicit `signature`, `std::filesystem::path` / `std::shared_ptr` marshalling on the caster-less backends, the `module_init` load-time hook, `generated_headers`, and manifest-declared `out_params`.

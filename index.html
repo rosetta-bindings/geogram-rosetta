@@ -317,7 +317,8 @@
             const vs = mesh.vertices();
             if (vs.dimension() > 3) vs.set_dimension(3);
             const positions = fromVectorF32(vs.point_coordinates());
-            const indices = fromVectorU32(mesh.triangles());
+            mesh.facets().triangulate(); // no-op when already triangles
+            const indices = fromVectorU32(mesh.facet_corners().vertex_indices());
 
             const geom = new THREE.BufferGeometry();
             geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
@@ -442,7 +443,7 @@
         // ------------------------------------------------------------------- boot
         createModule().then((mod) => {
             Module = mod;
-            Module.initialize(false);
+            // geogram's lifecycle runs at module load (manifest "module_init").
             clearLog('module loaded — click “Load Intergalactic_Spaceship.obj” (or pick a .obj file).');
             enable(true);
             $('file').disabled = false;

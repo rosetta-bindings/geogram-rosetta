@@ -1,19 +1,64 @@
 {
     "//": "Rosetta binding manifest for the Geogram library.",
     "//paths": "All relative paths resolve from THIS file's directory (the project root).",
-    "//design": "GEO::Mesh is bound DIRECTLY, and so are its member objects: mesh.vertices / mesh.facets / mesh.facet_corners are member-object reference properties (non-copyable stores holding a Mesh& back-reference; 'final': true suppresses their trampolines — MeshVertices/MeshFacets have public virtuals — which is also what lets node alias them). Geometry moves through geogram's own API: vertices.assign_points / facets.assign_triangle_mesh / vertices.point_coordinates, whose GEO::vector<T> parameters marshal as flat script arrays via the 'sequences' trait (their raw-pointer overloads are declared second, so the walk keeps the sequence one). Only TWO extension functions remain (src/mesh_ext.h): triangles() and tex_coords(), which encode the fan-triangulation-of-polygons output policy. load()/save() are Mesh members upstream (non-overloaded, PR #373) and bind natively, like copy/clear/show_stats. The GEO:: algorithms (remesh, repair, Co3Ne reconstruction, atlas, intersections) are bound straight from their headers; georo:: keeps only initialize(), the overloaded boolean helpers and the shared_ptr-returning CSG entry points (src/algorithms.h). NOTE: rosetta does not capture C++ default arguments — every parameter is explicit in the bindings.",
+    "//design": "GEO::Mesh is bound DIRECTLY, and so are its member objects: mesh.vertices / mesh.facets / mesh.facet_corners are member-object reference properties (non-copyable stores holding a Mesh& back-reference; 'final': true suppresses their trampolines — MeshVertices/MeshFacets have public virtuals — which is also what lets node alias them). Geometry moves through geogram's own API: vertices.assign_points / facets.assign_triangle_mesh / vertices.point_coordinates, whose GEO::vector<T> parameters marshal as flat script arrays via the 'sequences' trait (their raw-pointer overloads are declared second, so the walk keeps the sequence one). There is no glue left AT ALL: triangles() is mesh.facets.triangulate() (geogram fan-triangulates identically — mesh.cpp) followed by mesh.facet_corners.vertex_indices(), and tex_coords() is mesh.facet_corners.attributes().get_doubles('tex_coord'), whose two written-through references are declared out-parameters below. load()/save() are Mesh members upstream (non-overloaded, PR #373) and bind natively, like copy/clear/show_stats. The GEO:: algorithms (remesh, repair, Co3Ne reconstruction, atlas, intersections, booleans) are bound straight from their headers, the overloaded ones through an explicit 'signature'; CSG is GEO::CSGCompiler bound as a class. src/ is GONE — the binding is geogram's own API, end to end. geogram's lifecycle (GEO::initialize + the seven CmdLine::import_arg_group calls + routing OpenNL's printf through the Logger) now runs from 'module_init' when the module loads, and <geogram/version.h> comes from 'generated_headers' instead of a checked-in stand-in. NOTE: rosetta does not capture C++ default arguments — every parameter is explicit in the bindings.",
     "//sources": "The geogram sources are compiled straight into every binding target (no prebuilt libgeogram: the wasm target needs the sources anyway, and a native lib built by another toolchain would risk an ABI mismatch). One glob per source dir, DELIBERATELY not the recursive ** — the set is selective: geogram/lua/, geogram/api/ and most of third_party/ (tetgen, triangle, PoissonRecon, stb, amgcl, lua) must stay out. The vendored zlib/rply/libMeshb/OpenNL are C sources (the generated projects enable_language(C)).",
     "//defaults": "The top-level namespace default qualifies every unqualified class/function name with GEO:: (georo::* spellings pass verbatim). Groups ({\"header\": ..., \"entries\": [...]}) scope a shared header over a run of entries.",
     "//defines": "GEOGRAM_USE_BUILTIN_DEPS: mesh_io/geofile include the vendored libMeshb/rply/zlib instead of system libs. GEOGRAM_WITH_HLBFGS: compiles the HLBFGS optimizer in (required by the Newton iterations of CVT remeshing).",
-    "//version-h": "src/geogram/version.h stands in for the header geogram's own CMake would generate; src/ is listed before extern/geogram/src/lib so it wins the include lookup.",
     "//link-options": "Under Node, geogram's GEO::initialize() mounts the host filesystem with NODEFS (EM_ASM in basic/common.cpp), so the wasm link needs emscripten's nodefs.js library — exactly what geogram's own cmake/platforms/Emscripten-clang.cmake adds.",
 
     "//sequences": "GEO::vector<T> marshals like std::vector<T> (flat script arrays) through rosetta's sequence adapters — this is what lets geogram's own assign_points / assign_triangle_mesh bind (their GEO::vector overload is declared first, so it survives the walk's overload dedup and the adapter resolves the call by name). Mutable GEO::vector& parameters bind input-only (steal_arg steals from the adapter's copy, which is fine).",
     "sequences": ["GEO::vector"],
 
+    "//module-init": "geogram's LIFECYCLE, run when the module loads — this is what georo::initialize() used to be. GEO::initialize registers the mesh I/O handlers mesh.load()/save() need; the argument groups are where the algorithms read their tuning parameters from; nlPrintfFuncs routes OpenNL's printf/fprintf through geogram's Logger (as CmdLine::parse does in geogram's own programs) so solver output honors the quiet flag. Quiet by default. GEO::Logger cannot be bound to expose the switch — it derives from Counted and its destructor is protected, which no backend can wrap — so flip the set_quiet(true) statement below and regenerate to get geogram's log output.",
+    "module_init": {
+        "headers": [
+            "geogram/basic/common.h",
+            "geogram/basic/command_line.h",
+            "geogram/basic/command_line_args.h",
+            "geogram/basic/logger.h",
+            "geogram/NL/nl.h"
+        ],
+        "statements": [
+            "GEO::initialize(GEO::GEOGRAM_INSTALL_NONE)",
+            "GEO::CmdLine::import_arg_group(\"standard\")",
+            "GEO::CmdLine::import_arg_group(\"algo\")",
+            "GEO::CmdLine::import_arg_group(\"pre\")",
+            "GEO::CmdLine::import_arg_group(\"remesh\")",
+            "GEO::CmdLine::import_arg_group(\"post\")",
+            "GEO::CmdLine::import_arg_group(\"opt\")",
+            "GEO::CmdLine::import_arg_group(\"co3ne\")",
+            "nlPrintfFuncs(geogram_printf, geogram_fprintf)",
+            "GEO::Logger::instance()->set_quiet(true)"
+        ]
+    },
+
+    "//generated-headers": "<geogram/version.h> is generated by geogram's own CMake from version.h.in; geogram-rosetta compiles the sources without running that CMake, so rosetta writes it here — from geogram's own template, so there is no second copy to keep in sync. GEOGRAM_VERSION is passed with -D by geogram's CMake (basic/common.cpp reads it), which is what the compile_definitions entry below is.",
+    "generated_headers": [
+        {
+            "path": "geogram/version.h",
+            "template": "./extern/geogram/src/lib/geogram/basic/version.h.in",
+            "substitutions": {
+                "VORPALINE_VERSION_MAJOR": "1",
+                "VORPALINE_VERSION_MINOR": "10",
+                "VORPALINE_VERSION_PATCH": "1",
+                "VORPALINE_VERSION": "1.10.1-rosetta",
+                "VORPALINE_BUILD_NUMBER": "",
+                "VORPALINE_BUILD_DATE": "",
+                "VORPALINE_SVN_REVISION": ""
+            }
+        }
+    ],
+
+    "//out-params": "Which parameters a function RETURNS through a reference. Never inferred, and this manifest is why: GEO::MeshVertices::assign_points takes its GEO::vector<double>& as an INPUT it steals from, while AttributesManager::get_doubles fills its own as an OUTPUT — the same C++ shape, opposite directions. Marked here, get_doubles(name, out, dim) exposes get_doubles(name) returning (ok, values, dim).",
+    "out_params": {
+        "AttributesManager::get_doubles": [1, 2]
+    },
+
     "compile_definitions": [
         "GEOGRAM_USE_BUILTIN_DEPS",
-        "GEOGRAM_WITH_HLBFGS"
+        "GEOGRAM_WITH_HLBFGS",
+        "GEOGRAM_VERSION=\"1.10.1-rosetta\""
     ],
 
     "cpp26_root": "$ENV{HOME}/devs/c++/clang-p2996/build",
@@ -22,7 +67,6 @@
     "cpp26_lib": "$ENV{HOME}/devs/c++/clang-p2996/build/lib",
 
     "user_include": [
-        "./src",
         "./extern/geogram/src/lib",
         "./extern/geogram/src/lib/geogram/third_party",
         "./extern/geogram/src/lib/geogram/third_party/libMeshb/sources"
@@ -41,7 +85,6 @@
     ],
 
     "user_sources": [
-        "./src/*.cpp",
         "./extern/geogram/src/lib/geogram/basic/*.cpp",
         "./extern/geogram/src/lib/geogram/numerics/*.cpp",
         "./extern/geogram/src/lib/geogram/delaunay/*.cpp",
@@ -61,16 +104,17 @@
 
     "classes": [
         {"//": "--- the mesh and its member-object stores ---", "header": "geogram/mesh/mesh.h", "entries": [
-            {"name": "Mesh", "extensions": [
-                {"name": "georo::triangles",  "header": "mesh_ext.h"},
-                {"name": "georo::tex_coords", "header": "mesh_ext.h"}
-            ]},
+            {"name": "Mesh"},
             {"name": "MeshVertices", "final": true},
             {"name": "MeshFacets",   "final": true},
             {"name": "MeshFacetCornersStore"},
             {"name": "MeshElementsFlags"}
         ]},
+        {"//": "--- the attribute store behind mesh.facet_corners.attributes(). get_doubles is the read path for the UVs mesh_make_atlas writes: its GEO::vector<double>& and index_t& are OUT-parameters (see out_params), so scripts get (ok, values, dim) back instead of passing anything in. ---",
+         "name": "AttributesManager", "header": "geogram/basic/attributes.h"},
         {"name": "MeshRepairMode", "header": "geogram/mesh/mesh_repair.h"},
+        {"//": "--- CSG: bound directly. compile_file's std::filesystem::path marshals as a string and both compile_* return std::shared_ptr<Mesh>, which every target now handles (python holder, embind smart_ptr, sol2 native, N-API adopt). Call georo::initialize() first — a fresh CSGCompiler does not import geogram's argument groups. ---",
+         "name": "CSGCompiler", "header": "geogram/mesh/mesh_CSG_compiler.h"},
         {"//": "--- atlas ---", "header": "geogram/parameterization/mesh_atlas_maker.h", "entries": [
             {"name": "ChartParameterizer"},
             {"name": "ChartPacker"}
@@ -78,8 +122,6 @@
     ],
 
     "functions": [
-        {"header": "algorithms.h", "name": "georo::initialize"},
-
         {"//": "--- point clouds ---", "header": "geogram/points/co3ne.h", "entries": [
             {"name": "Co3Ne_smooth"},
             {"name": "Co3Ne_smooth_and_reconstruct"}
@@ -98,20 +140,16 @@
             {"name": "mesh_get_charts"}
         ]},
 
-        {"//": "--- booleans (georo glue: GEO::mesh_union et al. are overloaded) ---", "header": "algorithms.h", "entries": [
-            {"name": "georo::mesh_union"},
-            {"name": "georo::mesh_intersection"},
-            {"name": "georo::mesh_difference"}
-        ]},
-
-        {"//": "--- self-intersections ---", "header": "geogram/mesh/mesh_surface_intersection.h", "entries": [
+        {"//": "--- booleans + self-intersections. GEO::mesh_union et al. are OVERLOADED (a flags variant and a bool-verbose one), so each entry names the signature it wants: ^^name is ill-formed for an overload set, and without the signature the FIRST-declared overload would be the flags one. Spelled GEO:: explicitly — the top-level namespace default qualifies the name, not the signature, which is spliced verbatim. ---",
+         "header": "geogram/mesh/mesh_surface_intersection.h", "entries": [
+            {"name": "mesh_union",
+             "signature": "void(GEO::Mesh&, const GEO::Mesh&, const GEO::Mesh&, bool)"},
+            {"name": "mesh_intersection",
+             "signature": "void(GEO::Mesh&, const GEO::Mesh&, const GEO::Mesh&, bool)"},
+            {"name": "mesh_difference",
+             "signature": "void(GEO::Mesh&, const GEO::Mesh&, const GEO::Mesh&, bool)"},
             {"name": "mesh_remove_intersections"},
             {"name": "mesh_facets_have_intersection"}
-        ]},
-
-        {"//": "--- CSG ---", "header": "algorithms.h", "entries": [
-            {"name": "georo::csg_evaluate_string"},
-            {"name": "georo::csg_evaluate_file"}
         ]}
     ]
 }
