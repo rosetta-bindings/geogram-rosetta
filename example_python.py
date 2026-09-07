@@ -7,7 +7,7 @@
 import math
 import sys
 
-sys.path.insert(0, "bindings/python-expanded")
+sys.path.insert(0, "bindings/python")
 import geogram as geo
 
 # No initialize() call: geogram's lifecycle (GEO::initialize, the CmdLine

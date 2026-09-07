@@ -4,7 +4,7 @@
 --   cmake -S bindings/lua-expanded -B bindings/lua-expanded/build
 --   cmake --build bindings/lua-expanded/build -j
 --   lua example_lua.lua
-package.cpath = "bindings/lua-expanded/build/?.so;" .. package.cpath
+package.cpath = "bindings/lua/build/?.so;" .. package.cpath
 local geo = require("geogram")
 
 -- No initialize() call: geogram's lifecycle (GEO::initialize, the CmdLine

@@ -28,7 +28,7 @@ import pyvista as pv
 from pyvistaqt import QtInteractor
 from qtpy import QtCore, QtGui, QtWidgets
 
-sys.path.insert(0, str(Path(__file__).parent / "bindings" / "python-expanded"))
+sys.path.insert(0, str(Path(__file__).parent / "bindings" / "python"))
 import geogram as geo
 
 DATA = Path(__file__).parent / "data" / "Intergalactic_Spaceship.obj"

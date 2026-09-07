@@ -77,7 +77,7 @@ no wrapper class, no glue header, nothing to keep in sync.
 
 ## Prerequisites
 
-- clang-p2996 (C++26 reflection fork) at `~/devs/c++/clang-p2996/build` — used **only** to build the generator; the bindings themselves compile with stock toolchains (`*-expanded` targets).
+- clang-p2996 (C++26 reflection fork) at `~/devs/c++/clang-p2996/build` — used **only** to build the generator; the bindings themselves compile with stock toolchains.
 - geogram and rosetta under `extern/` — the bootstrap CMakeLists (step 0) fetches **both**. To use local checkouts instead, put (or symlink) them at `extern/geogram` / `extern/rosetta` before running it: an existing directory is left untouched. geogram needs its submodules (`git clone --recurse-submodules --depth 1 https://github.com/BrunoLevy/geogram extern/geogram`).
 - Python 3 + `pybind11` (`pip install pybind11`) for the Python target.
 - Node.js (`cmake-js` is installed by `npm i`) for the Node target.
@@ -96,6 +96,12 @@ Then, generate the `generator` + all the bindings and compile all of them:
 
 ```bash
 ./extern/rosetta/bin/rosetta_gen --build manifest.json
+```
+
+## (Re)-Installing the wheel
+
+```bash
+pip install --force-reinstall --no-deps --no-cache-dir ../dist/wheels/arch*
 ```
 
 All three examples run the same pipeline — CSG (sphere minus cylinder), the three boolean operations on two overlapping spheres, CVT remeshing of the union to 5000 vertices, LSCM/xatlas UV-atlas generation with UV read-back, then Co3Ne reconstruction of the surface from its bare point cloud — and print the same counts:

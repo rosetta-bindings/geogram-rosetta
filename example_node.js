@@ -17,7 +17,7 @@
 const path = require("path");
 
 const geo = require(path.join(
-    __dirname, "bindings", "node-expanded", "build", "Release", "geogram.node"
+    __dirname, "bindings", "node", "build", "Release", "geogram.node"
 ));
 
 // No initialize() call: geogram's lifecycle (GEO::initialize, the CmdLine

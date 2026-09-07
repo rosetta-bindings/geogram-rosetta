@@ -18,7 +18,7 @@
 //     to the member objects living inside the mesh — do NOT .delete() them,
 //     and don't use them after the mesh itself is deleted.
 
-const createModule = require("./bindings/wasm-expanded/build/geogram.js");
+const createModule = require("./bindings/wasm/build/geogram.js");
 
 function toVector(Module, ctor, array) {
     const v = new Module[ctor]();
